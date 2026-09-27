@@ -6,7 +6,7 @@ import pytest
 import numpy as np
 import time
 
-from detection.motion_detector import MotionDetector
+from plugins.motion_detector.motion_detector import MotionDetector
 
 
 class TestMotionDetectorInit:

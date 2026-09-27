@@ -8,7 +8,7 @@ import pytest
 import numpy as np
 import cv2
 
-from detection.image_enhancer import ImageEnhancer
+from plugins.image_enhancer.image_enhancer import ImageEnhancer
 
 
 class TestQualityAssessment:

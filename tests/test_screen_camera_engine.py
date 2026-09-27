@@ -65,7 +65,7 @@ class TestScreenCameraThreadMethods:
         assert thread.is_recording() is False
 
     def test_is_audio_active_no_stream(self, camera_screen):
-        from audio.audio_manager import audio_manager
+        from plugins.audio.audio_manager import audio_manager
         audio_manager.stop_camera_audio(camera_screen.id)
 
         thread = ScreenCameraThread(camera_screen)

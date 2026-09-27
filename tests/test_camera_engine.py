@@ -71,7 +71,7 @@ class TestCameraThreadMethods:
 
     def test_is_audio_active_no_stream(self, camera_ip):
         """Sin stream de audio activo, debe retornar False"""
-        from audio.audio_manager import audio_manager
+        from plugins.audio.audio_manager import audio_manager
         audio_manager.stop_camera_audio(camera_ip.id)
 
         thread = CameraThread(camera_ip)

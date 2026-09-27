@@ -10,7 +10,7 @@ import time
 import numpy as np
 from unittest.mock import MagicMock, patch
 
-from audio.audio_manager import (
+from plugins.audio.audio_manager import (
     AudioManager,
     CameraAudioStream,
     LocalAudioStream,

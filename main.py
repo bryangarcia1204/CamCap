@@ -249,6 +249,15 @@ def main():
     set_plugin_manager(plugin_manager)
     logger.info("🎛️ PluginManager creado")
 
+    # ✅ Inyectar resolver de schemas en SettingsManager
+    from core.settings_manager import settings_manager as _sm
+    def _schema_resolver(plugin_name):
+        pm = plugin_manager
+        if pm is not None and pm.context.settings is not None:
+            return pm.context.settings.get_schema(plugin_name)
+        return None
+    _sm.set_schema_provider(_schema_resolver)
+
     # ✅ NUEVO: CapabilityChecker
     from core.extensions.capability_checker import get_capability_checker
     checker = get_capability_checker()
@@ -360,10 +369,10 @@ def _inject_plugin_apis(main_window, plugin_manager, extension_registry, core_se
         TimersAPIImpl,
         ServicesAPIImpl,
     )
+    from core.event_bus import get_event_bus
 
     logger.info("🔌 Inyectando APIs...")
 
-    # Crear APIs
     settings_api = SettingsAPIImpl()
     cameras_api = CamerasAPIImpl(main_window.camera_manager)
     frames_api = FramesAPIImpl(cameras_api)
@@ -373,15 +382,13 @@ def _inject_plugin_apis(main_window, plugin_manager, extension_registry, core_se
     timers_api = TimersAPIImpl()
     services_api = ServicesAPIImpl()
 
-    # ✅ Inyectar en CoreServices
     core_services.set_camera_manager(main_window.camera_manager)
     core_services.set_file_manager(main_window.file_manager)
     core_services.set_main_window(main_window)
     core_services.set_extension_registry(extension_registry)
     from core.settings_manager import settings_manager
-    core_services.set_settings_manager(settings_manager)   # ← NUEVO
+    core_services.set_settings_manager(settings_manager)
 
-    # Inyectar en PluginManager
     plugin_manager.set_context_apis(
         settings=settings_api,
         cameras=cameras_api,
@@ -393,6 +400,9 @@ def _inject_plugin_apis(main_window, plugin_manager, extension_registry, core_se
         extensions=extension_registry,
         services=services_api,
     )
+
+    # ✅ Inyectar EventBus en el contexto
+    plugin_manager.context.event_bus = get_event_bus()
 
     logger.info("✅ APIs inyectadas")
 

@@ -1,8 +1,9 @@
 """
 Interfaces (Protocols) para el sistema de extensiones.
 
-Cualquier clase puede implementar estas interfaces.
-El Core las descubre vía ExtensionRegistry.
+Puntos de extensión GENÉRICOS del Core. NO mencionan ningún servicio
+específico (motion, face, audio, etc.). Cualquier plugin puede
+implementarlas.
 
 NO heredes de estas clases. Son Protocolos (structural typing).
 """
@@ -28,69 +29,30 @@ from .types import (
 
 @runtime_checkable
 class CameraProvider(Protocol):
-    """
-    Provee URLs de stream para cámaras.
+    """Provee URLs de stream para cámaras (cualquier protocolo)."""
 
-    Uso: un plugin puede soportar cámaras con protocolos custom
-    (por ejemplo, cámaras por cable USB, cámaras industriales, etc.)
-    """
-
-    def can_handle(self, camera) -> bool:
-        """Retorna True si este provider puede manejar la cámara."""
-        ...
-
-    def get_stream_url(self, camera) -> Optional[str]:
-        """Retorna la URL del stream o None si no aplica."""
-        ...
-
-    def get_protocol(self) -> CameraProtocol:
-        """Retorna el protocolo que maneja este provider."""
-        ...
+    def can_handle(self, camera) -> bool: ...
+    def get_stream_url(self, camera) -> Optional[str]: ...
+    def get_protocol(self) -> CameraProtocol: ...
 
 
 @runtime_checkable
 class CameraDetector(Protocol):
-    """
-    Detecta cámaras disponibles en el sistema.
+    """Detecta cámaras disponibles en el sistema (cualquier método)."""
 
-    Uso: un plugin puede añadir detección de cámaras por cable,
-    cámaras en red local, etc.
-    """
-
-    def get_name(self) -> str:
-        """Nombre del detector (para mostrar en UI)."""
-        ...
-
-    def detect(self) -> List[Any]:
-        """Retorna lista de cámaras detectadas (CameraDevice)."""
-        ...
+    def get_name(self) -> str: ...
+    def detect(self) -> List[Any]: ...
 
 
 @runtime_checkable
 class CameraLifecycleListener(Protocol):
-    """
-    Escucha eventos del ciclo de vida de cámaras.
-    """
+    """Escucha eventos del ciclo de vida de cámaras."""
 
-    def on_camera_added(self, camera):
-        """Cámara añadida."""
-        ...
-
-    def on_camera_removed(self, camera_id: int):
-        """Cámara eliminada."""
-        ...
-
-    def on_camera_connected(self, camera):
-        """Cámara conectada."""
-        ...
-
-    def on_camera_disconnected(self, camera):
-        """Cámara desconectada."""
-        ...
-
-    def on_camera_error(self, camera, error: str):
-        """Error en cámara."""
-        ...
+    def on_camera_added(self, camera): ...
+    def on_camera_removed(self, camera_id: int): ...
+    def on_camera_connected(self, camera): ...
+    def on_camera_disconnected(self, camera): ...
+    def on_camera_error(self, camera, error: str): ...
 
 
 # ============================================================
@@ -99,66 +61,27 @@ class CameraLifecycleListener(Protocol):
 
 @runtime_checkable
 class FramePreProcessor(Protocol):
-    """
-    Procesa un frame ANTES de mostrarlo.
+    """Transforma un frame ANTES de mostrarlo."""
 
-    Puede modificar el frame. Se ejecuta en orden de prioridad.
-    """
-
-    def process(self, camera_id: int, frame: np.ndarray) -> Optional[np.ndarray]:
-        """
-        Procesa el frame.
-
-        Returns:
-            Frame modificado, o None para no modificar.
-        """
-        ...
-
-    def get_priority(self) -> int:
-        """Prioridad (menor = primero)."""
-        ...
+    def process(self, camera_id: int, frame: np.ndarray) -> Optional[np.ndarray]: ...
+    def get_priority(self) -> int: ...
 
 
 @runtime_checkable
 class FramePostProcessor(Protocol):
-    """
-    Procesa un frame DESPUÉS de mostrarlo.
+    """Analiza un frame DESPUÉS de mostrarlo."""
 
-    NO puede modificar el frame visualmente, pero puede analizarlo.
-    """
-
-    def process(self, camera_id: int, frame: np.ndarray):
-        """Procesa el frame (no retorna nada)."""
-        ...
-
-    def get_priority(self) -> int:
-        ...
+    def process(self, camera_id: int, frame: np.ndarray): ...
+    def get_priority(self) -> int: ...
 
 
 @runtime_checkable
 class FrameAnalyzer(Protocol):
-    """
-    Analiza frames para detecciones (movimiento, caras, etc.).
+    """Analiza frames (movimiento, caras, lo que sea)."""
 
-    Se ejecuta en background thread.
-    """
-
-    def analyze(self, camera_id: int, frame: np.ndarray) -> Dict[str, Any]:
-        """
-        Analiza el frame.
-
-        Returns:
-            Dict con resultados (ej. {"motion": True, "rects": [...]})
-        """
-        ...
-
-    def should_run(self, camera_id: int) -> bool:
-        """Retorna True si debe analizar este frame."""
-        ...
-
-    def get_frame_skip(self) -> int:
-        """Cuántos frames saltar entre análisis."""
-        ...
+    def analyze(self, camera_id: int, frame: np.ndarray) -> Dict[str, Any]: ...
+    def should_run(self, camera_id: int) -> bool: ...
+    def get_frame_skip(self) -> int: ...
 
 
 # ============================================================
@@ -169,150 +92,90 @@ class FrameAnalyzer(Protocol):
 class ToolbarProvider(Protocol):
     """Provee widgets para la toolbar principal."""
 
-    def get_widgets(self) -> List[QWidget]:
-        """Retorna widgets a añadir."""
-        ...
+    def get_widgets(self) -> List[QWidget]: ...
 
 
 @runtime_checkable
 class MenuProvider(Protocol):
     """Provee menús."""
 
-    def get_menu_name(self) -> str:
-        """Nombre del menú."""
-        ...
-
-    def get_actions(self) -> List[QAction]:
-        """Acciones del menú."""
-        ...
+    def get_menu_name(self) -> str: ...
+    def get_actions(self) -> List[QAction]: ...
 
 
 @runtime_checkable
 class ConfigTab(Protocol):
     """Una pestaña completa de configuración."""
 
-    def get_id(self) -> str:
-        """ID único de la pestaña."""
-        ...
-
-    def get_title(self) -> str:
-        """Título a mostrar."""
-        ...
-
-    def get_icon(self) -> str:
-        """Emoji/icono (opcional)."""
-        ...
-
-    def get_widget(self) -> QWidget:
-        """Widget de la pestaña."""
-        ...
-
-    def on_save(self) -> bool:
-        """Guardar cambios. Retorna True si OK."""
-        ...
-
-    def on_load(self):
-        """Cargar valores iniciales."""
-        ...
+    def get_id(self) -> str: ...
+    def get_title(self) -> str: ...
+    def get_icon(self) -> str: ...
+    def get_widget(self) -> QWidget: ...
+    def on_save(self) -> bool: ...
+    def on_load(self): ...
 
 
 @runtime_checkable
 class ConfigSection(Protocol):
-    """
-    Sección de configuración que se añade a una tab existente.
+    """Sección de configuración que se añade a una tab existente."""
 
-    Uso: un plugin puede añadir campos a la tab "Captura" sin
-    reemplazarla.
-    """
-
-    def get_target_tab_id(self) -> str:
-        """ID de la tab donde añadirse (ej. "capture", "cameras")."""
-        ...
-
-    def get_title(self) -> str:
-        """Título de la sección."""
-        ...
-
-    def get_widget(self) -> QWidget:
-        """Widget de la sección."""
-        ...
-
-    def on_save(self) -> bool:
-        """Guardar cambios."""
-        ...
-
-    def get_priority(self) -> int:
-        """Orden dentro de la tab."""
-        ...
+    def get_target_tab_id(self) -> str: ...
+    def get_title(self) -> str: ...
+    def get_widget(self) -> QWidget: ...
+    def on_save(self) -> bool: ...
+    def get_priority(self) -> int: ...
 
 
 @runtime_checkable
 class ConfigWidget(Protocol):
-    """
-    Widget de configuración personalizado (slider, color picker, etc.)
+    """Widget de configuración personalizado (slider, color picker, etc.)"""
 
-    Uso: un plugin puede registrar tipos de config nuevos.
-    """
-
-    def get_config_key(self) -> str:
-        """Key en la config."""
-        ...
-
-    def get_widget(self) -> QWidget:
-        """Widget."""
-        ...
-
-    def get_value(self) -> Any:
-        """Valor actual."""
-        ...
-
-    def set_value(self, value: Any):
-        """Establecer valor."""
-        ...
+    def get_config_key(self) -> str: ...
+    def get_widget(self) -> QWidget: ...
+    def get_value(self) -> Any: ...
+    def set_value(self, value: Any): ...
 
 
 @runtime_checkable
 class VideoOverlay(Protocol):
-    """
-    Overlay sobre el video de una cámara.
+    """Overlay sobre el video de una cámara."""
 
-    Uso: mostrar información adicional sobre el video
-    (FPS, detecciones, marcas, etc.)
-    """
-
-    def should_show(self, camera_id: int) -> bool:
-        """Retorna True si debe mostrarse para esta cámara."""
-        ...
-
-    def get_overlay_widget(self, camera_id: int) -> Optional[QWidget]:
-        """Widget a superponer, o None."""
-        ...
-
-    def get_priority(self) -> int:
-        """Orden (mayor = más arriba)."""
-        ...
+    def should_show(self, camera_id: int) -> bool: ...
+    def get_overlay_widget(self, camera_id: int) -> Optional[QWidget]: ...
+    def get_priority(self) -> int: ...
 
 
 @runtime_checkable
 class StatusWidget(Protocol):
     """Widget para la status bar."""
 
-    def get_widget(self) -> QWidget:
-        """Widget a añadir a la status bar."""
-        ...
+    def get_widget(self) -> QWidget: ...
 
 
 @runtime_checkable
 class DialogProvider(Protocol):
     """Provee diálogos personalizados."""
 
-    def get_dialog_id(self) -> str:
-        """ID único del diálogo."""
-        ...
+    def get_dialog_id(self) -> str: ...
+    def get_dialog(self, parent=None) -> Optional[QDialog]: ...
 
-    def get_dialog(self, parent=None) -> Optional[QDialog]:
-        """Retorna instancia del diálogo."""
-        ...
+
+# ============================================================
+# UI EXTENSION GENÉRICA (inyección en slots)
+# ============================================================
+
+@runtime_checkable
+class UIExtension(Protocol):
+    """
+    Inyecta widgets en un punto de extensión (target, slot) declarado
+    por el Core. Es la interfaz MÁS genérica para UI.
+    """
+
+    def get_id(self) -> str: ...
+    def get_target(self) -> str: ...
+    def get_slot(self) -> str: ...
+    def get_widgets(self, context: dict) -> List[QWidget]: ...
+    def get_priority(self) -> int: ...
 
 
 # ============================================================
@@ -323,62 +186,38 @@ class DialogProvider(Protocol):
 class KeyboardInterceptor(Protocol):
     """Intercepta teclas a nivel global."""
 
-    def intercept(self, key: int, modifiers: int) -> bool:
-        """
-        Intercepta una tecla.
-
-        Returns:
-            True si la consumió (no se propaga).
-        """
-        ...
+    def intercept(self, key: int, modifiers: int) -> bool: ...
 
 
 @runtime_checkable
 class MouseInterceptor(Protocol):
     """Intercepta eventos de ratón."""
 
-    def intercept_click(self, widget, x: int, y: int, button: int) -> bool:
-        """Retorna True si consumió el evento."""
-        ...
+    def intercept_click(self, widget, x: int, y: int, button: int) -> bool: ...
 
 
 @runtime_checkable
 class AppLifecycleHook(Protocol):
     """Hook en el ciclo de vida de la app."""
 
-    def on_app_start(self, app):
-        """App iniciada."""
-        ...
-
-    def on_app_close(self):
-        """App cerrándose."""
-        ...
+    def on_app_start(self, app): ...
+    def on_app_close(self): ...
 
 
 @runtime_checkable
 class StartupHook(Protocol):
     """Se ejecuta al arrancar la app (después de MainWindow)."""
 
-    def on_startup(self, main_window):
-        """Se llama al arrancar."""
-        ...
-
-    def get_priority(self) -> int:
-        """Orden de ejecución."""
-        ...
+    def on_startup(self, main_window): ...
+    def get_priority(self) -> int: ...
 
 
 @runtime_checkable
 class ShutdownHook(Protocol):
     """Se ejecuta al cerrar la app."""
 
-    def on_shutdown(self):
-        """Se llama al cerrar."""
-        ...
-
-    def get_priority(self) -> int:
-        """Orden (mayor = primero, LIFO)."""
-        ...
+    def on_shutdown(self): ...
+    def get_priority(self) -> int: ...
 
 
 # ============================================================
@@ -389,38 +228,19 @@ class ShutdownHook(Protocol):
 class ThemeProvider(Protocol):
     """Provee un tema (stylesheet + paleta)."""
 
-    def get_id(self) -> str:
-        """ID único del tema."""
-        ...
-
-    def get_name(self) -> str:
-        """Nombre a mostrar."""
-        ...
-
-    def get_mode(self) -> ThemeMode:
-        """Modo (light/dark/auto)."""
-        ...
-
-    def get_stylesheet(self) -> str:
-        """QSS a aplicar."""
-        ...
-
-    def get_palette(self) -> Optional[Any]:
-        """QPalette a aplicar (opcional)."""
-        ...
+    def get_id(self) -> str: ...
+    def get_name(self) -> str: ...
+    def get_mode(self) -> ThemeMode: ...
+    def get_stylesheet(self) -> str: ...
+    def get_palette(self) -> Optional[Any]: ...
 
 
 @runtime_checkable
 class IconProvider(Protocol):
     """Provee iconos."""
 
-    def get_icon(self, name: str) -> Optional[QIcon]:
-        """Retorna icono por nombre."""
-        ...
-
-    def list_icons(self) -> List[str]:
-        """Lista iconos disponibles."""
-        ...
+    def get_icon(self, name: str) -> Optional[QIcon]: ...
+    def list_icons(self) -> List[str]: ...
 
 
 # ============================================================
@@ -431,285 +251,98 @@ class IconProvider(Protocol):
 class FileHandler(Protocol):
     """Maneja archivos con extensiones específicas."""
 
-    def get_extensions(self) -> List[str]:
-        """Extensiones soportadas (ej. [".myext"])."""
-        ...
-
-    def open(self, path: str) -> Any:
-        """Abre un archivo."""
-        ...
-
-    def save(self, path: str, data: Any) -> bool:
-        """Guarda un archivo."""
-        ...
-
-    def preview_widget(self, path: str) -> Optional[QWidget]:
-        """Widget de preview (opcional)."""
-        ...
+    def get_extensions(self) -> List[str]: ...
+    def open(self, path: str) -> Any: ...
+    def save(self, path: str, data: Any) -> bool: ...
+    def preview_widget(self, path: str) -> Optional[QWidget]: ...
 
 
 @runtime_checkable
 class StorageProvider(Protocol):
     """Provee almacenamiento adicional (cloud, base de datos, etc.)."""
 
-    def get_id(self) -> str:
-        """ID único."""
-        ...
-
-    def list_files(self, prefix: str = "") -> List[str]:
-        """Lista archivos."""
-        ...
-
-    def download(self, remote_path: str, local_path: str) -> bool:
-        """Descarga un archivo."""
-        ...
-
-    def upload(self, local_path: str, remote_path: str) -> bool:
-        """Sube un archivo."""
-        ...
+    def get_id(self) -> str: ...
+    def list_files(self, prefix: str = "") -> List[str]: ...
+    def download(self, remote_path: str, local_path: str) -> bool: ...
+    def upload(self, local_path: str, remote_path: str) -> bool: ...
 
 
 @runtime_checkable
 class ImportProvider(Protocol):
     """Importa datos de fuentes externas."""
 
-    def get_name(self) -> str:
-        """Nombre del provider."""
-        ...
-
-    def can_import(self, source: str) -> bool:
-        """Retorna True si puede importar de esta fuente."""
-        ...
-
-    def import_data(self, source: str) -> Any:
-        """Importa datos."""
-        ...
+    def get_name(self) -> str: ...
+    def can_import(self, source: str) -> bool: ...
+    def import_data(self, source: str) -> Any: ...
 
 
 @runtime_checkable
 class ExportProvider(Protocol):
     """Exporta datos a formatos externos."""
 
-    def get_name(self) -> str:
-        """Nombre del provider."""
-        ...
-
-    def get_extension(self) -> str:
-        """Extensión del formato (ej. ".pdf")."""
-        ...
-
-    def export_data(self, data: Any, path: str) -> bool:
-        """Exporta datos."""
-        ...
+    def get_name(self) -> str: ...
+    def get_extension(self) -> str: ...
+    def export_data(self, data: Any, path: str) -> bool: ...
 
 
 # ============================================================
-# PLUGINS
+# PLUGINS (meta)
 # ============================================================
 
 @runtime_checkable
 class PluginWrapper(Protocol):
-    """
-    Envuelve a otros plugins para modificar su comportamiento.
+    """Envuelve a otros plugins para modificar su comportamiento."""
 
-    Uso: añadir logging, métricas, validaciones, etc.
-    """
-
-    def wraps_plugin(self, plugin_name: str) -> bool:
-        """Retorna True si envuelve a este plugin."""
-        ...
-
-    def before_call(self, plugin_name: str, method: str, args: tuple, kwargs: dict):
-        """Se ejecuta antes de llamar a un método del plugin."""
-        ...
-
-    def after_call(self, plugin_name: str, method: str, result: Any) -> Any:
-        """Se ejecuta después. Puede modificar el resultado."""
-        ...
-
-    def on_error(self, plugin_name: str, method: str, error: Exception):
-        """Se ejecuta si el método lanza excepción."""
-        ...
+    def wraps_plugin(self, plugin_name: str) -> bool: ...
+    def before_call(self, plugin_name: str, method: str, args: tuple, kwargs: dict): ...
+    def after_call(self, plugin_name: str, method: str, result: Any) -> Any: ...
+    def on_error(self, plugin_name: str, method: str, error: Exception): ...
 
 
 @runtime_checkable
 class PluginLifecycleHook(Protocol):
     """Hook en el ciclo de vida de plugins."""
 
-    def on_plugin_loaded(self, plugin_name: str):
-        """Plugin cargado."""
-        ...
-
-    def on_plugin_enabled(self, plugin_name: str):
-        """Plugin activado."""
-        ...
-
-    def on_plugin_disabled(self, plugin_name: str):
-        """Plugin desactivado."""
-        ...
-
-    def on_plugin_unloaded(self, plugin_name: str):
-        """Plugin descargado."""
-        ...
+    def on_plugin_loaded(self, plugin_name: str): ...
+    def on_plugin_enabled(self, plugin_name: str): ...
+    def on_plugin_disabled(self, plugin_name: str): ...
+    def on_plugin_unloaded(self, plugin_name: str): ...
 
 
 @runtime_checkable
 class PluginValidator(Protocol):
-    """
-    Valida plugins antes de cargarlos.
+    """Valida plugins antes de cargarlos."""
 
-    Uso: un plugin puede validar otros plugins (seguridad, compatibilidad).
-    """
-
-    def validate(self, plugin_path: str, metadata: Dict[str, Any]) -> bool:
-        """Retorna True si el plugin es válido."""
-        ...
-
-    def get_rejection_reason(self) -> str:
-        """Razón de rechazo (si validate retornó False)."""
-        ...
+    def validate(self, plugin_path: str, metadata: Dict[str, Any]) -> bool: ...
+    def get_rejection_reason(self) -> str: ...
 
 
 # ============================================================
-# UTILIDADES
+# UTILIDADES (genéricas)
 # ============================================================
-
-@runtime_checkable
-class Logger(Protocol):
-    """Logger personalizado."""
-
-    def debug(self, msg: str): ...
-    def info(self, msg: str): ...
-    def warning(self, msg: str): ...
-    def error(self, msg: str, exc_info: bool = False): ...
-
 
 @runtime_checkable
 class NotificationProvider(Protocol):
-    """Provee notificaciones."""
+    """
+    Provee notificaciones (cualquier canal: Windows, Telegram, webhook…).
 
-    def get_id(self) -> str:
-        """ID único."""
-        ...
+    Genérico: el Core no sabe de canales específicos.
+    """
 
-    def notify(self, title: str, message: str, level: NotificationLevel,
-               image_path: Optional[str] = None) -> bool:
-        """Envía notificación."""
-        ...
-
-    def is_available(self) -> bool:
-        """Retorna True si está disponible."""
-        ...
+    def get_id(self) -> str: ...
+    def notify(
+        self,
+        title: str,
+        message: str,
+        level: NotificationLevel,
+        image_path: Optional[str] = None,
+    ) -> bool: ...
+    def is_available(self) -> bool: ...
 
 
 @runtime_checkable
 class TaskScheduler(Protocol):
     """Programa tareas en background."""
 
-    def schedule(self, name: str, interval_ms: int, callback: Callable):
-        """Programa una tarea periódica."""
-        ...
-
-    def cancel(self, name: str):
-        """Cancela una tarea."""
-        ...
-
-# ============================================================
-# PROVIDERS DE CLASES (migración de módulos a plugins)
-# ============================================================
-
-@runtime_checkable
-class MotionDetectorProvider(Protocol):
-    """Provee la clase MotionDetector desde un plugin."""
-    def create_detector(self, sensitivity=None, min_area=None, cooldown_seconds=None) -> Any: ...
-    def get_class(self): ...
-
-
-@runtime_checkable
-class FaceRecognizerProvider(Protocol):
-    """Provee la clase FaceRecognizer desde un plugin."""
-    def create_recognizer(self, known_faces_dir="known_faces", tolerance=None, model=None) -> Any: ...
-    def get_class(self): ...
-
-
-@runtime_checkable
-class ImageEnhancerProvider(Protocol):
-    """Provee la clase ImageEnhancer desde un plugin."""
-    def get_class(self): ...
-    def get_dialog_class(self): ...
-
-
-@runtime_checkable
-class DocumentScannerProvider(Protocol):
-    """Provee la clase ScanManager desde un plugin."""
-    def create_scanner(self, tesseract_path=None) -> Any: ...
-    def get_class(self): ...
-
-
-@runtime_checkable
-class AudioManagerProvider(Protocol):
-    """Provee el singleton AudioManager desde un plugin."""
-    def get_manager(self): ...
-    def stop_all(self): ...
-
-
-@runtime_checkable
-class NotificationsProvider(Protocol):
-    """Provee el singleton NotificationManager desde un plugin."""
-    def get_manager(self): ...
-    def notify_motion(self, camera_name: str, image_path=None): ...
-    def notify_face_unknown(self, camera_name: str, image_path=None): ...
-    def notify_face_known(self, camera_name: str, person_name: str): ...
-    def notify_custom(self, title: str, message: str): ...
-
-# ============================================================
-# EXTENSIONES DE WIDGETS/DÍALOGOS (agregar UI a componentes Core)
-# ============================================================
-
-@runtime_checkable
-class UIExtension(Protocol):
-    """
-    Extensión genérica de UI.
-
-    Cualquier plugin puede inyectar widgets en cualquier punto
-    de extensión declarado por el Core.
-
-    Puntos de extensión actuales (target, slot):
-      ("camera_widget", "header")   -> botones en el header de cada cámara
-      ("camera_widget", "footer")   -> VU meter grande bajo el video
-      ("image_preview", "info_bar") -> botones en el diálogo de imagen
-      ("video_preview", "info_bar") -> botones en el visor de video
-      ("main_toolbar", "left")      -> botones a la izquierda del toolbar
-      ("main_toolbar", "right")     -> botones a la derecha del toolbar
-      ("settings_dialog", "tabs")   -> tabs adicionales (futuro)
-      ("status_bar", "permanent")   -> widgets permanentes en la status bar
-    """
-
-    def get_id(self) -> str:
-        """ID único de la extensión (para logs y desregistro)."""
-        ...
-
-    def get_target(self) -> str:
-        """Componente objetivo (ej. 'camera_widget')."""
-        ...
-
-    def get_slot(self) -> str:
-        """Slot dentro del target (ej. 'header')."""
-        ...
-
-    def get_widgets(self, context: dict) -> List[QWidget]:
-        """
-        Retorna los widgets a inyectar.
-
-        `context` incluye:
-          - camera_widget:  {camera_id, camera, widget}
-          - image_preview:  {dialog, image, camera_name}
-          - video_preview:  {preview, path}
-          - main_toolbar:   {main_window}
-          - status_bar:     {main_window}
-        """
-        ...
-
-    def get_priority(self) -> int:
-        """Orden (menor = más a la izquierda/arriba)."""
-        ...
+    def schedule(self, name: str, interval_ms: int, callback: Callable): ...
+    def cancel(self, name: str): ...

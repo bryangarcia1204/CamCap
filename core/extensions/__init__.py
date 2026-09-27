@@ -1,9 +1,9 @@
 """
 Sistema de extensiones de ProCamera.
 
-Las extensiones son puntos de extensión que el Core expone
-para que CUALQUIER código (plugins o builtin) pueda extender
-el comportamiento sin modificar el Core.
+El Core expone puntos de extensión GENÉRICOS. Cualquier código
+(plugins o builtin) puede extender el comportamiento sin modificar
+el Core.
 """
 from .interfaces import (
     # Cámaras
@@ -25,6 +25,7 @@ from .interfaces import (
     VideoOverlay,
     StatusWidget,
     DialogProvider,
+    UIExtension,
 
     # Comportamiento
     KeyboardInterceptor,
@@ -43,24 +44,14 @@ from .interfaces import (
     ImportProvider,
     ExportProvider,
 
-    # Plugins
+    # Plugins (meta)
     PluginWrapper,
     PluginLifecycleHook,
     PluginValidator,
 
     # Utilidades
-    Logger,
     NotificationProvider,
     TaskScheduler,
-
-    MotionDetectorProvider,
-    FaceRecognizerProvider,
-    ImageEnhancerProvider,
-    DocumentScannerProvider,
-    AudioManagerProvider,
-    NotificationsProvider,
-    # ✅ UI genérica
-    UIExtension,
 )
 
 from .types import (
@@ -113,6 +104,7 @@ __all__ = [
     "VideoOverlay",
     "StatusWidget",
     "DialogProvider",
+    "UIExtension",
 
     # Comportamiento
     "KeyboardInterceptor",
@@ -133,14 +125,8 @@ __all__ = [
     "StorageProvider",
     "ImportProvider",
     "ExportProvider",
-    "MotionDetectorProvider",
-    "FaceRecognizerProvider",
-    "ImageEnhancerProvider",
-    "DocumentScannerProvider",
-    "AudioManagerProvider",
-    "NotificationsProvider",
 
-    # Plugins
+    # Plugins (meta)
     "PluginWrapper",
     "PluginLifecycleHook",
     "PluginValidator",
@@ -149,7 +135,6 @@ __all__ = [
     "set_capability_checker",
 
     # Utilidades
-    "Logger",
     "NotificationProvider",
     "TaskScheduler",
 
@@ -172,7 +157,4 @@ __all__ = [
     "camera_provider",
     "config_tab",
     "theme_provider",
-
-    # ✅ UI genérica
-    "UIExtension",
 ]

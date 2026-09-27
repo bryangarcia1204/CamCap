@@ -175,3 +175,47 @@ class TimersAPI(Protocol):
                callback: Callable, single_shot: bool = False): ...
     def stop(self, name: str): ...
     def destroy(self, name: str): ...
+
+class PluginContext:
+    """
+    Contexto que se pasa a cada plugin.
+
+    Contiene TODAS las APIs que un plugin puede usar.
+    """
+
+    def __init__(self):
+        # === APIs ===
+        self.settings: Optional['SettingsAPI'] = None
+        self.cameras: Optional['CamerasAPI'] = None
+        self.frames: Optional['FramesAPI'] = None
+        self.ui: Optional['UIAPI'] = None
+        self.files: Optional['FilesAPI'] = None
+        self.notifications: Optional['NotificationsAPI'] = None
+        self.logger: Optional['LoggerAPI'] = None
+        self.timers: Optional['TimersAPI'] = None
+
+        # === Sistemas de comunicación ===
+        self.hooks: Optional['HookRegistry'] = None        # plugin ↔ plugin
+        self.event_bus: Optional[Any] = None               # ← NUEVO: Core ↔ plugins
+        self.extensions: Optional[Any] = None              # ExtensionRegistry
+        self.services: Optional[Any] = None                # CoreServices
+
+        # Info del plugin actual
+        self.plugin_name: str = ""
+
+        # Info del sistema
+        self.app_version: str = "2.0.0"
+        self.is_debug: bool = False
+        self.plugin_dir: str = ""
+
+    def __repr__(self) -> str:
+        apis = []
+        for name in ("settings", "cameras", "frames", "ui", "files",
+                     "notifications", "logger", "timers", "hooks",
+                     "event_bus", "extensions", "services"):
+            if getattr(self, name, None) is not None:
+                apis.append(name)
+        return (
+            f"<PluginContext plugin='{self.plugin_name}' "
+            f"apis={apis} debug={self.is_debug}>"
+        )

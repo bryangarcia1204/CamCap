@@ -28,6 +28,7 @@ class SettingsManager:
     def _initialize(self):
         self._settings = QSettings("ProCamera", "CameraControl")
         self._settings.setDefaultFormat(QSettings.IniFormat)
+        self._schema_provider = None
 
         # Caches
         self._cameras_cache: Optional[List[CameraDevice]] = None
@@ -216,7 +217,11 @@ class SettingsManager:
                 return res
         return Resolution.VGA
 
-        # ==================== PLUGINS ====================
+    # ==================== PLUGINS ====================
+
+    def set_schema_provider(self, fn):
+        """Permite al Core inyectar un resolver de schemas sin acoplarse."""
+        self._schema_provider = fn
 
     def get_plugin_config(self, plugin_name: str) -> dict:
         """
@@ -227,26 +232,20 @@ class SettingsManager:
         """
         try:
             schema = None
-            # Intentar leer schema si está registrado
-            try:
-                from core.plugin_api import get_plugin_manager
-                pm = get_plugin_manager()
-                if pm is not None and pm.context.settings is not None:
-                    schema = pm.context.settings.get_schema(plugin_name)
-            except Exception:
-                pass
+            if self._schema_provider is not None:
+                try:
+                    schema = self._schema_provider(plugin_name)
+                except Exception:
+                    schema = None
 
             result = {}
             prefix = f"plugin/{plugin_name}/"
             for key in self._settings.allKeys():
                 if key.startswith(prefix):
                     short_key = key[len(prefix):]
-                    # Si tenemos schema, leer con tipo correcto
                     if schema and short_key in schema:
                         spec = schema[short_key]
-                        result[short_key] = self._read_value_with_type(
-                            key, spec
-                        )
+                        result[short_key] = self._read_value_with_type(key, spec)
                     else:
                         result[short_key] = self._settings.value(key)
             return result
@@ -423,6 +422,50 @@ class SettingsManager:
         self._detection_settings_cache = settings
         return dict(settings)
 
+    def get_motion_enabled(self) -> bool:
+        """Retorna si la detección de movimiento está activada."""
+        return self._settings.value(
+            "detection/motion_enabled", False, type=bool
+        )
+
+    def get_face_enabled(self) -> bool:
+        """Retorna si el reconocimiento facial está activado."""
+        return self._settings.value(
+            "detection/face_enabled", False, type=bool
+        )
+
+    def set_motion_enabled(self, enabled: bool) -> bool:
+        """Activa/desactiva la detección de movimiento."""
+        try:
+            self._settings.setValue("detection/motion_enabled", enabled)
+            self._settings.sync()
+            self._detection_settings_cache = None
+            # Espejo en advanced
+            self._settings.setValue("advanced/motion_enabled", enabled)
+            self._settings.sync()
+            self._advanced_settings_cache = None
+            logger.info(f"🔍 Motion enabled: {enabled}")
+            return True
+        except Exception as e:
+            logger.error(f"Error guardando motion_enabled: {e}")
+            return False
+
+    def set_face_enabled(self, enabled: bool) -> bool:
+        """Activa/desactiva el reconocimiento facial."""
+        try:
+            self._settings.setValue("detection/face_enabled", enabled)
+            self._settings.sync()
+            self._detection_settings_cache = None
+            # Espejo en advanced
+            self._settings.setValue("advanced/face_enabled", enabled)
+            self._settings.sync()
+            self._advanced_settings_cache = None
+            logger.info(f"👤 Face enabled: {enabled}")
+            return True
+        except Exception as e:
+            logger.error(f"Error guardando face_enabled: {e}")
+            return False
+
     def save_detection_settings(self, settings: dict) -> bool:
         try:
             for key, value in settings.items():
@@ -516,6 +559,7 @@ class SettingsManager:
             "throttle_gpu_measure_sample": s.value("advanced/throttle_gpu_measure_sample", 5, type=int),
 
             # ==================== DETECCIÓN MOVIMIENTO ====================
+            "motion_enabled": s.value("advanced/motion_enabled", False, type=bool),   # ← NUEVO
             "detection_frame_skip": s.value("advanced/detection_frame_skip", 3, type=int),
             "motion_method": s.value("advanced/motion_method", "adaptive", type=str),
             "motion_use_shadow_removal": s.value("advanced/motion_use_shadow_removal", True, type=bool),
@@ -535,6 +579,7 @@ class SettingsManager:
             "motion_knn_dist2_threshold": s.value("advanced/motion_knn_dist2_threshold", 400, type=int),
 
             # ==================== FACIAL ====================
+            "face_enabled": s.value("advanced/face_enabled", False, type=bool),       # ← NUEVO
             "face_detector_model": s.value("advanced/face_detector_model", "sface", type=str),
             "face_auto_register_unknown": s.value("advanced/face_auto_register_unknown", True, type=bool),
             "face_min_face_size": s.value("advanced/face_min_face_size", 20, type=int),

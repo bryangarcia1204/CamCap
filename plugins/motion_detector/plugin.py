@@ -33,7 +33,7 @@ class MotionDetectorPlugin(BasePlugin):
     def on_load(self) -> bool:
         """Carga la clase MotionDetector."""
         try:
-            from plugins.motion_detector.motion_detector import MotionDetector
+            from .motion_detector import MotionDetector
             self._motion_class = MotionDetector
             logger.info("🔌 MotionDetectorPlugin: clase cargada")
             return True
@@ -44,16 +44,8 @@ class MotionDetectorPlugin(BasePlugin):
     def on_enable(self) -> bool:
         """Registra provider + analyzer + ConfigTab."""
         try:
-            # 1. Provider de clase (para el fallback directo)
-            from core.extensions.interfaces import MotionDetectorProvider
-            self.register_extension(
-                MotionDetectorProvider,
-                self,
-                priority=50,
-            )
-
-            # 2. ✅ NUEVO: FrameAnalyzer
-            from plugins.motion_detector.analyzer import MotionAnalyzer
+            # 1. ✅ NUEVO: FrameAnalyzer
+            from .analyzer import MotionAnalyzer
             from core.extensions.interfaces import FrameAnalyzer
 
             self._analyzer = MotionAnalyzer(self.context)
@@ -65,10 +57,10 @@ class MotionDetectorPlugin(BasePlugin):
             )
             logger.debug("🎯 MotionAnalyzer registrado en ExtensionRegistry")
 
-            # 3. ConfigTab
+            # 2. ConfigTab
             from core.extensions.interfaces import ConfigTab
             from core.extensions.config_tab_provider import PluginConfigTabProvider
-            from plugins.motion_detector.config_tab import MotionDetectorConfigTab
+            from .config_tab import MotionDetectorConfigTab
 
             self._tab_provider = PluginConfigTabProvider(
                 plugin_name=self.NAME,
@@ -132,7 +124,7 @@ class MotionDetectorPlugin(BasePlugin):
     def create_detector(self, sensitivity=None, min_area=None, cooldown_seconds=None):
         """Crea una nueva instancia del MotionDetector."""
         if self._motion_class is None:
-            from plugins.motion_detector.motion_detector import MotionDetector
+            from .motion_detector import MotionDetector
             self._motion_class = MotionDetector
 
         return self._motion_class(
@@ -148,3 +140,13 @@ class MotionDetectorPlugin(BasePlugin):
     def get_analyzer(self):
         """Retorna el FrameAnalyzer registrado (para uso interno)."""
         return self._analyzer
+
+    def on_settings_changed(self, changed_keys: list):
+        """Notifica al analyzer para que refresque config."""
+        if "motion_enabled" in changed_keys or "motion_method" in changed_keys:
+            if self._analyzer is not None and hasattr(self._analyzer, "reload_config"):
+                try:
+                    self._analyzer.reload_config()
+                    logger.debug("🔄 MotionAnalyzer recargado tras cambio de settings")
+                except Exception as e:
+                    logger.error(f"Error recargando analyzer: {e}")

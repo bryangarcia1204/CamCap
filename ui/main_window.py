@@ -1,10 +1,12 @@
 """
-Ventana principal de ProCamera - v6
-- FASE 3: FrameAnalyzers vía ExtensionRegistry
-- Monitor de sistema
-- Audio local
-- Cierre ordenado
-- Propagación en caliente
+Ventana principal de ProCamera - v7 (post-limpieza)
+
+Cambios v7:
+- MotionProcessor simplificado (sin analyzer legacy)
+- _configure_camera_detections simplificado (solo refresh_analyzers)
+- _get_face_recognizer_for_camera sin fallback legacy
+- Eliminados _reload_scan_only y _reload_detection_settings_only
+- _reload_enhancer_only importa del plugin
 """
 import os
 import cv2
@@ -12,7 +14,6 @@ import numpy as np
 import requests
 import time
 import threading
-from pathlib import Path
 from datetime import datetime
 from typing import Optional, Dict
 
@@ -43,19 +44,16 @@ logger = get_logger("MainWindow")
 
 
 class MotionProcessor(QRunnable):
-    """Worker para procesar la detección de movimiento en hilo separado."""
+    """Worker para guardar la captura de movimiento en hilo separado."""
 
     class Signals(QObject):
         finished = Signal()
         error = Signal(str)
 
-    def __init__(self, camera_name, frame, rects, analyzer, settings, callback):
+    def __init__(self, camera_name, frame, callback):
         super().__init__()
         self.camera_name = camera_name
         self.frame = frame
-        self.rects = rects
-        self.analyzer = analyzer  # MotionAnalyzer o None
-        self.settings = settings
         self.callback = callback
         self.signals = self.Signals()
 
@@ -73,22 +71,8 @@ class MotionProcessor(QRunnable):
                 filename = f"motion_{timestamp}_{safe_camera_name}.jpg"
                 image_path = os.path.join(directory, filename)
 
-                if self.analyzer is not None and hasattr(self.analyzer, 'draw_motion_rects'):
-                    # Necesitamos el camera_id — lo pasamos como 0 si no lo tenemos
-                    frame_with_rects = self.frame
-                    # Intentar dibujar con el analyzer si lo soporta
-                    try:
-                        frame_with_rects = self.analyzer.draw_motion_rects(
-                            self.settings.camera_id if hasattr(self.settings, 'camera_id') else 0,
-                            self.frame, self.rects
-                        )
-                    except Exception:
-                        frame_with_rects = self.frame
-                else:
-                    frame_with_rects = self.frame
-
                 success, buffer = cv2.imencode(
-                    '.jpg', frame_with_rects,
+                    '.jpg', self.frame,
                     [cv2.IMWRITE_JPEG_QUALITY, 85]
                 )
                 if success:
@@ -253,27 +237,28 @@ class MainWindow(QMainWindow):
         clear_data_action.triggered.connect(self._clear_all_data)
         settings_menu.addAction(clear_data_action)
 
+    # ==================== EXTENSIONES UI ====================
+
     def _apply_ui_extensions(self):
-        """Aplica TODAS las UIExtension (toolbar, menu, status bar, dock)."""
+        """Aplica TODAS las UIExtension y StatusWidget."""
         logger.info("🎨 Aplicando extensiones de UI...")
         try:
             from core.extension_registry import get_extension_registry
-            from core.extensions.interfaces import UIExtension
+            from core.extensions.interfaces import StatusWidget
             registry = get_extension_registry()
         except Exception as e:
             logger.debug(f"⚠️ Registry no disponible: {e}")
             return
 
-        # Toolbar (slots "left" y "right")
+        # Toolbar
         toolbar = getattr(self, "main_toolbar", None)
         if toolbar is not None:
-            self._apply_toolbar_extensions(toolbar)
+            self._apply_toolbar_slot(toolbar, "left")
+            self._apply_toolbar_slot(toolbar, "right")
 
         # Status bar
         try:
-            from core.extensions.interfaces import StatusWidget
-            providers = registry.get(StatusWidget)
-            for provider in providers:
+            for provider in registry.get(StatusWidget):
                 try:
                     widget = provider.get_widget()
                     if widget and self.status_bar:
@@ -285,68 +270,48 @@ class MainWindow(QMainWindow):
 
         logger.info("✅ Extensiones de UI aplicadas")
 
-    def _apply_toolbar_extensions(self, toolbar):
-        """Inyecta botones de plugins en la toolbar (slots left/right)."""
+    def _apply_toolbar_slot(self, toolbar, slot: str):
+        """Inyecta UIExtension en un slot específico de la toolbar."""
         try:
             from core.extension_registry import get_extension_registry
             from core.extensions.interfaces import UIExtension
-
             registry = get_extension_registry()
             if registry is None:
                 return
-
-            # Botones "left" (antes del spacer)
-            left_exts = [
-                ext for ext in registry.get(UIExtension)
-                if ext.get_target() == "main_toolbar" and ext.get_slot() == "left"
+            exts = [
+                e for e in registry.get(UIExtension)
+                if e.get_target() == "main_toolbar" and e.get_slot() == slot
             ]
-            left_exts = sorted(
-                left_exts,
+            exts = sorted(
+                exts,
                 key=lambda e: e.get_priority() if hasattr(e, "get_priority") else 50,
             )
-
-            for ext in left_exts:
+            for ext in exts:
                 try:
-                    widgets = ext.get_widgets({"main_window": self}) or []
-                    for w in widgets:
-                        if w is None:
-                            continue
-                        if w.parent() is None:
+                    for w in ext.get_widgets({"main_window": self}) or []:
+                        if w is not None and w.parent() is None:
                             toolbar.addWidget(w)
-                        w.setProperty("_is_plugin_widget", True)
-                    if widgets:
-                        toolbar.addSeparator()
+                            w.setProperty("_is_plugin_widget", True)
                 except Exception as e:
-                    logger.error(
-                        f"❌ UIExtension toolbar '{ext.get_id()}' falló: {e}",
-                        exc_info=True,
-                    )
-
-            # Botones "right" (al final)
-            right_exts = [
-                ext for ext in registry.get(UIExtension)
-                if ext.get_target() == "main_toolbar" and ext.get_slot() == "right"
-            ]
-            right_exts = sorted(
-                right_exts,
-                key=lambda e: e.get_priority() if hasattr(e, "get_priority") else 50,
-            )
-            for ext in right_exts:
-                try:
-                    widgets = ext.get_widgets({"main_window": self}) or []
-                    for w in widgets:
-                        if w is None:
-                            continue
-                        if w.parent() is None:
-                            toolbar.addWidget(w)
-                        w.setProperty("_is_plugin_widget", True)
-                except Exception as e:
-                    logger.error(
-                        f"❌ UIExtension toolbar '{ext.get_id()}' falló: {e}",
-                        exc_info=True,
-                    )
+                    logger.error(f"❌ UIExtension '{ext.get_id()}' falló: {e}")
         except Exception as e:
-            logger.debug(f"⚠️ Error aplicando toolbar: {e}")
+            logger.debug(f"⚠️ Error aplicando toolbar slot {slot}: {e}")
+
+    def _rebuild_toolbar_extensions(self):
+        """Limpia y re-aplica los botones de plugins en la toolbar."""
+        toolbar = self.main_toolbar
+        if toolbar is None:
+            return
+
+        for action in list(toolbar.actions()):
+            w = toolbar.widgetForAction(action)
+            if w is not None and w.property("_is_plugin_widget"):
+                toolbar.removeAction(action)
+                w.setParent(None)
+                w.deleteLater()
+
+        self._apply_toolbar_slot(toolbar, "left")
+        self._apply_toolbar_slot(toolbar, "right")
 
     def _create_toolbar(self):
         toolbar = QToolBar("Principal")
@@ -355,7 +320,6 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
         self.main_toolbar = toolbar
 
-        # === Botones Core ===
         capture_all_btn = QPushButton("📸 Capturar Todas")
         capture_all_btn.clicked.connect(self._on_capture_all)
         capture_all_btn.setStyleSheet(self._get_toolbar_btn_style("#2d7d9a", "#4da0c4"))
@@ -370,7 +334,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.record_all_btn)
         toolbar.addSeparator()
 
-        # ✅ Slot "left" — plugins inyectan aquí (ej. audio: 🎤 Mic PC)
+        # Slot "left" — plugins inyectan aquí (ej. audio: 🎤 Mic PC)
         self._apply_toolbar_slot(toolbar, "left")
 
         settings_btn = QPushButton("⚙️ Configurar")
@@ -400,35 +364,7 @@ class MainWindow(QMainWindow):
         self.system_monitor_widget = SystemMonitorWidget()
         toolbar.addWidget(self.system_monitor_widget)
 
-        # ✅ Slot "right" — plugins inyectan al final
         self._apply_toolbar_slot(toolbar, "right")
-
-    def _apply_toolbar_slot(self, toolbar, slot: str):
-        """Inyecta UIExtension en un slot específico de la toolbar."""
-        try:
-            from core.extension_registry import get_extension_registry
-            from core.extensions.interfaces import UIExtension
-            registry = get_extension_registry()
-            if registry is None:
-                return
-            exts = [
-                e for e in registry.get(UIExtension)
-                if e.get_target() == "main_toolbar" and e.get_slot() == slot
-            ]
-            exts = sorted(
-                exts,
-                key=lambda e: e.get_priority() if hasattr(e, "get_priority") else 50,
-            )
-            for ext in exts:
-                try:
-                    for w in ext.get_widgets({"main_window": self}) or []:
-                        if w is not None and w.parent() is None:
-                            toolbar.addWidget(w)
-                            w.setProperty("_is_plugin_widget", True)
-                except Exception as e:
-                    logger.error(f"❌ UIExtension '{ext.get_id()}' falló: {e}")
-        except Exception as e:
-            logger.debug(f"⚠️ Error aplicando toolbar slot {slot}: {e}")
 
     def _get_toolbar_btn_style(self, bg, hover):
         return f"""
@@ -502,6 +438,7 @@ class MainWindow(QMainWindow):
 
         widget = self.camera_grid.add_camera_widget(camera)
 
+        # Conectar señales del plugin camera_controls (via widget)
         try:
             widget.flash_toggled.connect(self._on_flash_toggle)
             widget.auto_flash_toggled.connect(self._on_auto_flash_toggled)
@@ -546,66 +483,23 @@ class MainWindow(QMainWindow):
         self._update_status()
 
     def _configure_camera_detections(self, camera: CameraDevice, thread):
-        """
-        FASE 3: los analyzers se cargan lazy desde el engine.
-        El Core NO configura detectores legacy.
-        Solo se configura escaneo legacy si el plugin document_scanner
-        no está activo (fallback).
+        """FASE 3: los analyzers se cargan lazy desde el engine."""
+        if hasattr(thread, "refresh_analyzers"):
+            thread.refresh_analyzers()
 
-        Los flags motion_enabled/face_enabled viven en QSettings y los
-        leen los analyzers directamente desde settings_manager.
-        """
-        try:
-            # Verificar si hay analyzers disponibles
-            from core.extension_registry import get_extension_registry
-            from core.extensions.interfaces import FrameAnalyzer
-            registry = get_extension_registry()
-            has_analyzers = (
-                registry is not None
-                and len(registry.get(FrameAnalyzer)) > 0
-            )
+    def on_plugin_state_changed(self, plugin_name: str, enabled: bool):
+        """Callback cuando cambia el estado de un plugin."""
+        logger.info(f"🔄 Plugin '{plugin_name}' {'activado' if enabled else 'desactivado'}")
 
-            if has_analyzers:
-                logger.debug(
-                    f"🎯 {camera.name}: usando FrameAnalyzers del registry"
-                )
-                # Forzar recarga de analyzers en el thread
-                if hasattr(thread, "refresh_analyzers"):
-                    thread.refresh_analyzers()
-                return
+        for widget in self.camera_grid.get_camera_widgets():
+            if hasattr(widget, "refresh_extensions"):
+                try:
+                    widget.refresh_extensions()
+                except Exception as e:
+                    logger.debug(f"Error refrescando widget: {e}")
 
-            # Fallback legacy (solo si NO hay plugins de detección activos)
-            logger.debug(f"ℹ️ {camera.name}: sin analyzers, activando legacy")
-            det_settings = self.settings.get_detection_settings()
-            if det_settings.get("motion_enabled") or det_settings.get("face_enabled"):
-                if hasattr(thread, "setup_detection"):
-                    thread.setup_detection(
-                        motion_enabled=det_settings.get("motion_enabled", False),
-                        face_enabled=det_settings.get("face_enabled", False),
-                        motion_sensitivity=det_settings.get("motion_sensitivity", 25),
-                        motion_min_area=det_settings.get("motion_min_area", 500),
-                        face_tolerance=det_settings.get("face_tolerance", 0.6),
-                    )
-        except Exception as e:
-            logger.error(f"Error configurando detecciones: {e}", exc_info=True)
-
-    def _rebuild_toolbar_extensions(self):
-        """Limpia y re-aplica los botones de plugins en la toolbar."""
-        toolbar = self.main_toolbar
-        if toolbar is None:
-            return
-
-        # Quitar botones de plugin previos
-        for action in list(toolbar.actions()):
-            w = toolbar.widgetForAction(action)
-            if w is not None and w.property("_is_plugin_widget"):
-                toolbar.removeAction(action)
-                w.setParent(None)
-                w.deleteLater()
-
-        # Re-aplicar
-        self._apply_toolbar_slot(toolbar, "left")
-        self._apply_toolbar_slot(toolbar, "right")
+        if hasattr(self, "main_toolbar") and self.main_toolbar is not None:
+            self._rebuild_toolbar_extensions()
 
     # ==================== DETECCIONES ====================
 
@@ -613,17 +507,23 @@ class MainWindow(QMainWindow):
         camera = self.camera_manager.get_camera(camera_id)
         if not camera:
             return
+
+        # ✅ Emitir al event bus
+        from core.event_bus import get_event_bus
+        from core.events import MOTION_DETECTED
+        try:
+            get_event_bus().emit(
+                MOTION_DETECTED,
+                camera_id=camera_id,
+                camera_name=camera.name,
+                rects=rects,
+            )
+        except Exception as e:
+            logger.debug(f"Error emitiendo MOTION_DETECTED: {e}")
+
         thread = self.camera_manager.get_thread(camera_id)
         if not thread:
             return
-
-        # FASE 3: el analyzer ya aplicó cooldown. No volver a chequear.
-        # Compatibilidad con modo legacy: chequear cooldown si existe detector.
-        motion_detector = getattr(thread, 'motion_detector', None)
-        if motion_detector is not None:
-            if hasattr(motion_detector, 'can_notify'):
-                # Legacy ya notificó por can_notify en detect()
-                pass
 
         det_settings = self.settings.get_detection_settings()
         if det_settings.get("auto_flash_on_motion", False):
@@ -638,21 +538,6 @@ class MainWindow(QMainWindow):
         if frame is None:
             return
 
-        settings = self.settings.get_capture_settings()
-
-        # FASE 3: obtener analyzer para dibujar rects
-        analyzer = None
-        try:
-            from core.extension_registry import get_extension_registry
-            from core.extensions.interfaces import FrameAnalyzer
-            registry = get_extension_registry()
-            for a in registry.get(FrameAnalyzer):
-                if hasattr(a, 'draw_motion_rects'):
-                    analyzer = a
-                    break
-        except Exception:
-            pass
-
         def on_motion_processed(image_path):
             if image_path:
                 self.status_label.setText(
@@ -661,26 +546,17 @@ class MainWindow(QMainWindow):
             else:
                 self.status_label.setText(f"🚨 Movimiento en {camera.name}")
 
-            try:
-                from notifications.notification_manager import notification_manager
-                notification_manager.notify_motion(camera.name, image_path)
-            except Exception as e:
-                logger.warning(f"No se pudo notificar: {e}")
-
         worker = MotionProcessor(
             camera_name=camera.name,
             frame=frame,
-            rects=rects,
-            analyzer=analyzer,
-            settings=settings,
-            callback=on_motion_processed
+            callback=on_motion_processed,
         )
         self.thread_pool.start(worker)
         self.status_label.setText(f"🚨 Movimiento detectado en {camera.name}...")
 
     def _auto_flash_on_motion(self, camera_id: int):
         thread = self.camera_manager.get_thread(camera_id)
-        if not thread or not hasattr(thread, "toggle_flash"):
+        if not thread or not hasattr(thread, 'toggle_flash'):
             return
         thread.toggle_flash(True)
         widget = self.camera_grid.get_camera_widget(camera_id)
@@ -692,12 +568,12 @@ class MainWindow(QMainWindow):
         flash_on_ms = advanced_config.get("flash_on_duration_ms", 2000)
         self._schedule_once(
             flash_on_ms + 1000,
-            lambda: self._auto_flash_off(camera_id),
+            lambda: self._auto_flash_off(camera_id)
         )
 
     def _auto_flash_off(self, camera_id: int):
         thread = self.camera_manager.get_thread(camera_id)
-        if thread and hasattr(thread, "toggle_flash"):
+        if thread and hasattr(thread, 'toggle_flash'):
             thread.toggle_flash(False)
         widget = self.camera_grid.get_camera_widget(camera_id)
         if widget and hasattr(widget, "_plugin_flash"):
@@ -733,6 +609,21 @@ class MainWindow(QMainWindow):
         camera = self.camera_manager.get_camera(camera_id)
         if not camera:
             return
+
+        # ✅ Emitir al event bus
+        from core.event_bus import get_event_bus
+        from core.events import FACE_DETECTED
+        try:
+            get_event_bus().emit(
+                FACE_DETECTED,
+                camera_id=camera_id,
+                camera_name=camera.name,
+                locations=locations,
+                names=names,
+            )
+        except Exception as e:
+            logger.debug(f"Error emitiendo FACE_DETECTED: {e}")
+
         thread = self.camera_manager.get_thread(camera_id)
         if not thread:
             return
@@ -745,7 +636,6 @@ class MainWindow(QMainWindow):
             if frame is None:
                 return
 
-            # FASE 3: obtener recognizer del analyzer o legacy
             recognizer = self._get_face_recognizer_for_camera(camera_id, thread)
             if recognizer is None:
                 return
@@ -772,27 +662,15 @@ class MainWindow(QMainWindow):
                             recognizer, frame, locations, names, camera.name
                         )
 
-                try:
-                    from notifications.notification_manager import notification_manager
-                    notification_manager.notify_face_unknown(camera.name, image_path)
-                except Exception:
-                    pass
-
                 self.status_label.setText(f"👤 Desconocido en {camera.name}")
             except Exception as e:
                 logger.error(f"Error guardando captura: {e}")
 
         elif known_names:
-            try:
-                from notifications.notification_manager import notification_manager
-                for name in known_names:
-                    notification_manager.notify_face_known(camera.name, name)
-            except Exception:
-                pass
+            pass
 
     def _get_face_recognizer_for_camera(self, camera_id: int, thread):
-        """Obtiene el FaceRecognizer (del analyzer o legacy)."""
-        # Intentar del analyzer
+        """Obtiene el FaceRecognizer del analyzer."""
         try:
             from core.extension_registry import get_extension_registry
             from core.extensions.interfaces import FrameAnalyzer
@@ -802,8 +680,7 @@ class MainWindow(QMainWindow):
                     return a._recognizers[camera_id]
         except Exception:
             pass
-        # Fallback legacy
-        return getattr(thread, 'face_recognizer', None)
+        return None
 
     def _register_unknown_face(self, recognizer, frame, locations, names, camera_name):
         try:
@@ -852,11 +729,34 @@ class MainWindow(QMainWindow):
                 f"(confianza: {result.get('confidence', 0):.0%})"
             )
 
+        from core.event_bus import get_event_bus
+        from core.events import OBJECT_DETECTED
+        try:
+            get_event_bus().emit(
+                OBJECT_DETECTED,
+                camera_id=camera_id,
+                objects=[result],
+            )
+        except Exception:
+            pass
+
+
     def _on_text_recognized(self, camera_id: int, text: str):
         camera = self.camera_manager.get_camera(camera_id)
         if camera and text.strip():
             preview = text.strip()[:50] + "..." if len(text) > 50 else text.strip()
             self.status_label.setText(f"📝 {camera.name}: {preview}")
+
+        from core.event_bus import get_event_bus
+        from core.events import TEXT_RECOGNIZED
+        try:
+            get_event_bus().emit(
+                TEXT_RECOGNIZED,
+                camera_id=camera_id,
+                text=text,
+            )
+        except Exception:
+            pass
 
     # ==================== CAPTURA ====================
 
@@ -870,7 +770,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", f"{camera.name} no conectada")
             return
 
-        # ✅ Auto-flash: consultar el plugin camera_controls via widget
         widget = self.camera_grid.get_camera_widget(camera_id)
         auto_flash = False
         if widget and hasattr(widget, "_plugin_flash"):
@@ -892,13 +791,19 @@ class MainWindow(QMainWindow):
 
     def _capture_with_auto_flash(self, camera_id: int, thread, camera):
         widget = self.camera_grid.get_camera_widget(camera_id)
-        if widget and hasattr(widget, 'set_flash_state'):
-            widget.set_flash_state(True)
+        if widget and hasattr(widget, "_plugin_flash"):
+            try:
+                widget._plugin_flash["set_flash_state"](True)
+            except Exception:
+                pass
 
         flash_success = thread.toggle_flash(True)
         if not flash_success:
-            if widget and hasattr(widget, 'set_flash_state'):
-                widget.set_flash_state(False)
+            if widget and hasattr(widget, "_plugin_flash"):
+                try:
+                    widget._plugin_flash["set_flash_state"](False)
+                except Exception:
+                    pass
             self._capture_normal(camera_id, thread, camera)
             return
 
@@ -932,8 +837,11 @@ class MainWindow(QMainWindow):
     def _turn_off_flash(self, camera_id: int, thread):
         thread.toggle_flash(False)
         widget = self.camera_grid.get_camera_widget(camera_id)
-        if widget and hasattr(widget, 'set_flash_state'):
-            widget.set_flash_state(False)
+        if widget and hasattr(widget, "_plugin_flash"):
+            try:
+                widget._plugin_flash["set_flash_state"](False)
+            except Exception:
+                pass
         self.status_label.setText("✅ Captura completada")
 
     def _capture_normal(self, camera_id: int, thread, camera):
@@ -1091,8 +999,11 @@ class MainWindow(QMainWindow):
         else:
             self.status_label.setText(f"⚠️ Error flash: {camera.name}")
             widget = self.camera_grid.get_camera_widget(camera_id)
-            if widget:
-                widget.set_flash_state(not enabled)
+            if widget and hasattr(widget, "_plugin_flash"):
+                try:
+                    widget._plugin_flash["set_flash_state"](not enabled)
+                except Exception:
+                    pass
 
     def _on_auto_flash_toggled(self, camera_id: int, enabled: bool):
         camera = self.camera_manager.get_camera(camera_id)
@@ -1178,7 +1089,6 @@ class MainWindow(QMainWindow):
             return
 
         if report.level == ReloadLevel.HOT_RELOAD:
-            self._reload_enhancer_only()
             self._apply_hot_reload(modules or {})
             self.status_label.setText(
                 f"⚙️ Aplicado en caliente: {', '.join(report.categories)}"
@@ -1253,25 +1163,6 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
-        # Audio
-        if "audio" in modules:
-            try:
-                if hasattr(audio_manager, 'reload_config'):
-                    audio_manager.reload_config()
-            except Exception:
-                pass
-
-        # Notifications
-        if "notifications" in modules:
-            try:
-                from notifications.notification_manager import notification_manager
-                cfg = advanced_config.get_all()
-                notification_manager.min_interval_seconds = cfg.get(
-                    "notification_min_interval", 30
-                )
-            except Exception:
-                pass
-
         # System Monitor
         if "system_monitor" in modules:
             try:
@@ -1281,6 +1172,14 @@ class MainWindow(QMainWindow):
                 )
             except Exception:
                 pass
+
+        # ✅ Emitir SETTINGS_CHANGED para que plugins reaccionen
+        try:
+            from core.event_bus import get_event_bus
+            from core.events import SETTINGS_CHANGED
+            get_event_bus().emit(SETTINGS_CHANGED, modules=modules)
+        except Exception as e:
+            logger.debug(f"Error emitiendo SETTINGS_CHANGED: {e}")
 
         # Thumbnail
         if "thumbnail" in modules:
@@ -1298,32 +1197,18 @@ class MainWindow(QMainWindow):
         logger.info("🔄 Recargando FrameAnalyzers...")
         for camera_id, thread in list(self.camera_threads.items()):
             try:
-                if hasattr(thread, "refresh_analyzers"):
+                if hasattr(thread, 'refresh_analyzers'):
                     thread.refresh_analyzers()
             except Exception as e:
                 logger.debug(f"Error refresh analyzers {camera_id}: {e}")
 
-        # Cámaras locales
         for camera_id in list(self.camera_manager.local_camera_ids):
             thread = self.camera_manager.local_manager.get_thread(camera_id)
-            if thread and hasattr(thread, "refresh_analyzers"):
+            if thread and hasattr(thread, 'refresh_analyzers'):
                 try:
                     thread.refresh_analyzers()
                 except Exception:
                     pass
-
-    def on_plugin_state_changed(self, plugin_name: str, enabled: bool):
-        """Callback para cuando un plugin cambia de estado."""
-        detection_plugins = {
-            "motion_detector", "face_recognizer", "document_scanner"
-        }
-        if plugin_name in detection_plugins:
-            logger.info(
-                f"🔄 Plugin '{plugin_name}' "
-                f"{'activado' if enabled else 'desactivado'} "
-                f"→ recargando analyzers"
-            )
-            self._refresh_frame_analyzers()
 
     def _restart_affected_cameras(self, camera_ids: list):
         for camera_id in camera_ids:
@@ -1361,7 +1246,6 @@ class MainWindow(QMainWindow):
 
         for camera_id, thread in list(self.camera_threads.items()):
             try:
-                # Throttle
                 if hasattr(thread, '_adaptive_throttle') and thread._adaptive_throttle:
                     throttle = thread._adaptive_throttle
                     if cfg.get("throttle_enabled", True):
@@ -1376,7 +1260,6 @@ class MainWindow(QMainWindow):
                         throttle.target_gpu = 999.0
                         throttle.max_skip = 0
 
-                # FPS
                 if hasattr(thread, 'fps'):
                     new_fps = cfg.get("target_fps", 30)
                     if hasattr(thread, 'camera') and thread.camera.is_screen:
@@ -1385,13 +1268,11 @@ class MainWindow(QMainWindow):
                     if hasattr(thread, '_frame_scheduler'):
                         thread._frame_scheduler.set_fps(new_fps)
 
-                # Skip
                 if hasattr(thread, '_detection_frame_skip'):
                     thread._detection_frame_skip = cfg.get("detection_frame_skip", 3)
                 if hasattr(thread, '_scan_frame_skip'):
                     thread._scan_frame_skip = cfg.get("scan_frame_skip", 5)
 
-                # Red
                 if hasattr(thread, 'max_reconnect_attempts'):
                     thread.max_reconnect_attempts = cfg.get("reconnect_attempts", 3)
                 if hasattr(thread, '_frame_timeout'):
@@ -1403,7 +1284,6 @@ class MainWindow(QMainWindow):
                 if hasattr(thread, '_reconnect_delay'):
                     thread._reconnect_delay = cfg.get("reconnect_delay", 0.5)
 
-                # Recargar config general
                 if hasattr(thread, 'reload_config'):
                     try:
                         thread.reload_config()
@@ -1413,23 +1293,14 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 logger.error(f"Error propagando config a cámara {camera_id}: {e}")
 
-        # FileManager
         try:
             if hasattr(self.file_manager, 'reload_config'):
                 self.file_manager.reload_config()
         except Exception:
             pass
 
-        # AudioManager
-        try:
-            if hasattr(audio_manager, 'reload_config'):
-                audio_manager.reload_config()
-        except Exception:
-            pass
-
     def _reload_detection_settings_only(self):
         advanced_config.reload()
-        # FASE 3: forzar reload de analyzers (los analyzers leen config ellos mismos)
         try:
             from core.extension_registry import get_extension_registry
             from core.extensions.interfaces import FrameAnalyzer
@@ -1440,18 +1311,6 @@ class MainWindow(QMainWindow):
                         a.reload_config()
                     except Exception:
                         pass
-        except Exception:
-            pass
-
-    def _reload_scan_only(self):
-        # FASE 3: ya cubierto por reload_config del DocumentAnalyzer
-        pass
-
-    def _reload_enhancer_only(self):
-        try:
-            from detection.image_enhancer import ImageEnhancer
-            if hasattr(ImageEnhancer, 'reload_config'):
-                ImageEnhancer.reload_config()
         except Exception:
             pass
 
@@ -1599,7 +1458,6 @@ class MainWindow(QMainWindow):
         self._is_closing = True
         self.hide()
 
-        # ShutdownHooks
         try:
             from core.extension_registry import get_extension_registry
             from core.extensions.interfaces import ShutdownHook
@@ -1641,10 +1499,13 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
+        # ✅ Emitir APP_CLOSING para que plugins limpien
         try:
-            audio_manager.stop_all()
-        except Exception:
-            pass
+            from core.event_bus import get_event_bus
+            from core.events import APP_CLOSING
+            get_event_bus().emit(APP_CLOSING)
+        except Exception as e:
+            logger.debug(f"Error emitiendo APP_CLOSING: {e}")
 
         try:
             ui_settings = {
@@ -1673,6 +1534,14 @@ class MainWindow(QMainWindow):
                     self.camera_manager.stop_all()
                 except Exception as e:
                     logger.error(f"Error en camera_manager.stop_all: {e}")
+
+                # ✅ Esperar a que los threads terminen
+                for thread in self.camera_manager.threads.values():
+                    try:
+                        if hasattr(thread, 'wait') and thread.isRunning():
+                            thread.wait(2000)
+                    except Exception:
+                        pass
 
                 self.camera_threads.clear()
                 logger.info("✅ Aplicación cerrada")

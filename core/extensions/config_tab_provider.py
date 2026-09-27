@@ -16,7 +16,6 @@ Uso en plugin.py:
             tab_id="plugin_motion_detector",
             title="Motion Detector",
             icon="🚶",
-            priority=100,   # ← mayor = más a la derecha
         ),
     )
 """
@@ -29,7 +28,12 @@ logger = get_logger("PluginConfigTabProvider")
 
 
 class PluginConfigTabProvider:
-    """Envuelve un PluginConfigTab para exponerlo como ConfigTab (on-demand)."""
+    """
+    Envuelve un PluginConfigTab para exponerlo como ConfigTab (on-demand).
+
+    Delega TODOS los métodos relevantes al widget instanciado, incluyendo
+    el nuevo sistema de staging.
+    """
 
     def __init__(
         self,
@@ -73,17 +77,63 @@ class PluginConfigTabProvider:
                 return None
         return self._widget
 
-    def on_save(self) -> bool:
-        if self._widget is not None and hasattr(self._widget, 'apply_changes'):
+    # ==================== DELEGACIÓN AL WIDGET ====================
+
+    def apply_changes(self) -> bool:
+        """Delega al widget si existe."""
+        if self._widget is not None and hasattr(self._widget, "apply_changes"):
             try:
                 return self._widget.apply_changes()
             except Exception as e:
-                logger.error(f"❌ Error guardando '{self._tab_id}': {e}")
+                logger.error(f"❌ Error en apply_changes de '{self._tab_id}': {e}", exc_info=True)
                 return False
         return True
 
+    def on_save(self) -> bool:
+        """Alias legacy."""
+        return self.apply_changes()
+
     def on_load(self):
-        pass
+        """Carga inicial (opcional)."""
+        if self._widget is not None and hasattr(self._widget, "on_load"):
+            try:
+                self._widget.on_load()
+            except Exception as e:
+                logger.debug(f"Error en on_load de '{self._tab_id}': {e}")
+
+    # ✅ NUEVO: delegación de staging
+    def get_staged_changes(self) -> dict:
+        """Delega al widget. Retorna {} si el widget no usa staging."""
+        if self._widget is not None and hasattr(self._widget, "get_staged_changes"):
+            try:
+                return self._widget.get_staged_changes()
+            except Exception as e:
+                logger.error(
+                    f"❌ Error en get_staged_changes de '{self._tab_id}': {e}",
+                    exc_info=True,
+                )
+                return {"advanced": {}, "detection": {}, "plugin_config": {}}
+        return {"advanced": {}, "detection": {}, "plugin_config": {}}
+
+    def has_staged_changes(self) -> bool:
+        """Delega al widget."""
+        if self._widget is not None and hasattr(self._widget, "has_staged_changes"):
+            try:
+                return self._widget.has_staged_changes()
+            except Exception:
+                return False
+        return False
+
+    def get_config(self) -> dict:
+        """Delega al widget."""
+        if self._widget is not None and hasattr(self._widget, "get_config"):
+            try:
+                return self._widget.get_config()
+            except Exception:
+                return {}
+        return {}
+
+    # ==================== CLEANUP ====================
 
     def cleanup(self):
         """Libera el widget si está instanciado."""

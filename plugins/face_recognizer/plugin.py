@@ -25,7 +25,7 @@ class FaceRecognizerPlugin(BasePlugin):
 
     def on_load(self) -> bool:
         try:
-            from plugins.face_recognizer.face_recognizer import FaceRecognizer
+            from .face_recognizer import FaceRecognizer
             self._recognizer_class = FaceRecognizer
             logger.info("🔌 FaceRecognizerPlugin: clase cargada")
             return True
@@ -35,10 +35,7 @@ class FaceRecognizerPlugin(BasePlugin):
 
     def on_enable(self) -> bool:
         try:
-            from core.extensions.interfaces import FaceRecognizerProvider
-            self.register_extension(FaceRecognizerProvider, self, priority=50)
-
-            from plugins.face_recognizer.analyzer import FaceAnalyzer
+            from .analyzer import FaceAnalyzer
             from core.extensions.interfaces import FrameAnalyzer
             self._analyzer = FaceAnalyzer(self.context)
             self.register_extension(
@@ -49,7 +46,7 @@ class FaceRecognizerPlugin(BasePlugin):
 
             from core.extensions.interfaces import ConfigTab
             from core.extensions.config_tab_provider import PluginConfigTabProvider
-            from plugins.face_recognizer.config_tab import FaceRecognizerConfigTab
+            from .config_tab import FaceRecognizerConfigTab
             self._tab_provider = PluginConfigTabProvider(
                 plugin_name=self.NAME,
                 plugin_context=self.context,
@@ -100,7 +97,7 @@ class FaceRecognizerPlugin(BasePlugin):
     def create_recognizer(self, known_faces_dir="known_faces",
                           tolerance=None, model=None):
         if self._recognizer_class is None:
-            from plugins.face_recognizer.face_recognizer import FaceRecognizer
+            from .face_recognizer import FaceRecognizer
             self._recognizer_class = FaceRecognizer
         return self._recognizer_class(
             known_faces_dir=known_faces_dir,
@@ -112,3 +109,12 @@ class FaceRecognizerPlugin(BasePlugin):
 
     def get_analyzer(self):
         return self._analyzer
+
+    def on_settings_changed(self, changed_keys: list):
+        if "face_enabled" in changed_keys or "face_detector_model" in changed_keys:
+            if self._analyzer is not None and hasattr(self._analyzer, "reload_config"):
+                try:
+                    self._analyzer.reload_config()
+                    logger.debug("🔄 FaceAnalyzer recargado tras cambio de settings")
+                except Exception as e:
+                    logger.error(f"Error recargando analyzer: {e}")

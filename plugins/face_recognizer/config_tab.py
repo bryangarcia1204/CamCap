@@ -1,14 +1,15 @@
 """
 Tab de configuración del plugin face_recognizer.
 
-Incluye TODOS los parámetros de reconocimiento facial.
+Incluye:
+- ✅ Checkbox de ACTIVACIÓN (face_enabled)
+- Todos los parámetros del reconocimiento facial
 """
 from PySide6.QtWidgets import (
     QVBoxLayout, QGridLayout, QGroupBox, QLabel,
     QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox,
     QScrollArea, QWidget
 )
-from PySide6.QtCore import Qt
 
 from ui.settings_dialog_base import PluginConfigTab
 
@@ -16,9 +17,8 @@ from ui.settings_dialog_base import PluginConfigTab
 class FaceRecognizerConfigTab(PluginConfigTab):
     """Configuración completa del reconocimiento facial."""
 
-    # ==================== SCHEMA ====================
-
     SCHEMA = {
+        "face_enabled": {"type": "bool", "default": False},   # ← NUEVO
         "face_detector_model": {"type": "str", "default": "sface"},
         "face_auto_register_unknown": {"type": "bool", "default": True},
         "face_min_face_size": {"type": "int", "default": 20},
@@ -31,7 +31,6 @@ class FaceRecognizerConfigTab(PluginConfigTab):
     }
 
     def build_ui(self):
-        # Registrar schema
         if self.context.settings is not None:
             self.context.settings.register_config_schema(
                 self.plugin_name, self.SCHEMA
@@ -45,6 +44,28 @@ class FaceRecognizerConfigTab(PluginConfigTab):
         layout = QVBoxLayout(content)
         layout.setSpacing(16)
         layout.setContentsMargins(16, 16, 16, 16)
+
+        # ============ GRUPO 0: ACTIVACIÓN ============
+        activation_group = QGroupBox("🎯 Activación")
+        activation_layout = QVBoxLayout(activation_group)
+
+        self.enabled_cb = QCheckBox("👤 Activar reconocimiento facial")
+        self.enabled_cb.setToolTip(
+            "Cuando está activo, se detectan y reconocen caras en los frames. "
+            "Consume más CPU que el detector de movimiento."
+        )
+        activation_layout.addWidget(self.enabled_cb)
+
+        note = QLabel(
+            "💡 Requiere modelos ONNX en plugins/face_recognizer/models/:\n"
+            "   • face_detection_yunet_2023mar.onnx\n"
+            "   • face_recognition_sface_2021dec.onnx"
+        )
+        note.setStyleSheet("color: rgba(255,255,255,0.6); font-size: 11px;")
+        note.setWordWrap(True)
+        activation_layout.addWidget(note)
+
+        layout.addWidget(activation_group)
 
         # ============ Grupo 1: Modelo y detección ============
         model_group = QGroupBox("🧠 Modelo y Detección")
@@ -135,14 +156,16 @@ class FaceRecognizerConfigTab(PluginConfigTab):
         scroll.setWidget(content)
         self.layout.addWidget(scroll)
 
-        # Cargar valores
         self._load_values()
 
-    # ==================== CARGA / GUARDADO ====================
-
     def _load_values(self):
-        """Carga valores desde advanced_config."""
         try:
+            # 1. Activación
+            from core.settings_manager import settings_manager
+            det = settings_manager.get_detection_settings()
+            self.enabled_cb.setChecked(det.get("face_enabled", False))
+
+            # 2. Ajustes avanzados
             from utils.config_loader import advanced_config
             cfg = advanced_config.get_all()
 
@@ -159,7 +182,6 @@ class FaceRecognizerConfigTab(PluginConfigTab):
             print(f"Error cargando valores de face_recognizer: {e}")
 
     def get_config(self):
-        """Retorna los valores actuales."""
         return {
             "face_detector_model": self.model_combo.currentText(),
             "face_auto_register_unknown": self.auto_register_cb.isChecked(),
@@ -173,19 +195,25 @@ class FaceRecognizerConfigTab(PluginConfigTab):
         }
 
     def apply_changes(self) -> bool:
-        """Aplica los cambios al advanced_config."""
         try:
             from core.settings_manager import settings_manager
+            from utils.config_loader import advanced_config
 
+            enabled = self.enabled_cb.isChecked()
+
+            # 1. Activación
+            det = settings_manager.get_detection_settings()
+            det["face_enabled"] = enabled
+            settings_manager.save_detection_settings(det)
+
+            # 2. Ajustes
             config = self.get_config()
-
             existing = settings_manager.get_advanced_settings()
             existing.update(config)
+            existing["face_enabled"] = enabled
             settings_manager.save_advanced_settings(existing)
 
-            from utils.config_loader import advanced_config
             advanced_config.reload()
-
             return True
         except Exception as e:
             print(f"Error aplicando config de face_recognizer: {e}")

@@ -539,8 +539,17 @@ class UIAPIImpl:
             logger.warning(f"🚫 show_notification denegado para '{_get_current_plugin()}'")
             return
         try:
-            from plugins.notifications.windows_notifier import windows_notifier
-            windows_notifier.notify(title, message)
+            from core.extension_registry import get_extension_registry
+            from core.extensions.interfaces import NotificationProvider
+            from core.extensions.types import NotificationLevel
+            registry = get_extension_registry()
+            if registry is None:
+                return
+            providers = registry.get(NotificationProvider)
+            if not providers:
+                logger.debug("No hay NotificationProvider activo")
+                return
+            providers[0].notify(title, message, NotificationLevel.INFO)
         except Exception as e:
             logger.debug(f"Error mostrando notificación: {e}")
 
@@ -618,13 +627,20 @@ class FilesAPIImpl:
 
 class NotificationsAPIImpl:
     def notify(self, title, message, image_path=None) -> bool:
-        from core.extensions.types import Capability
+        from core.extensions.types import Capability, NotificationLevel
         if not _check_capability(Capability.NOTIFICATIONS):
             logger.warning(f"🚫 notify denegado para '{_get_current_plugin()}'")
             return False
         try:
-            from plugins.notifications.windows_notifier import windows_notifier
-            return windows_notifier.notify(title, message)
+            from core.extension_registry import get_extension_registry
+            from core.extensions.interfaces import NotificationProvider
+            registry = get_extension_registry()
+            if registry is None:
+                return False
+            providers = registry.get(NotificationProvider)
+            if not providers:
+                return False
+            return providers[0].notify(title, message, NotificationLevel.INFO, image_path)
         except Exception as e:
             logger.debug(f"Error notificando: {e}")
             return False
@@ -634,19 +650,19 @@ class NotificationsAPIImpl:
         if not _check_capability(Capability.TELEGRAM):
             logger.warning(f"🚫 notify_telegram denegado para '{_get_current_plugin()}'")
             return False
+
         try:
-            from plugins.notifications.notification_manager import notification_manager
-            if not getattr(notification_manager, 'telegram_enabled', False):
-                return False
-            bot = getattr(notification_manager, 'telegram_bot', None)
-            if bot is None:
-                return False
-            if image_path:
-                return bot.send_photo(image_path, message)
-            else:
-                return bot.send_message(message)
+            from core.event_bus import get_event_bus
+            get_event_bus().emit(
+                "custom_notification",
+                title="ProCamera",
+                message=message,
+                image_path=image_path,
+                channel="telegram",
+            )
+            return True
         except Exception as e:
-            logger.debug(f"Error Telegram: {e}")
+            logger.debug(f"Error emitiendo notify_telegram: {e}")
             return False
 
 

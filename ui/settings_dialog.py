@@ -7,6 +7,7 @@ Estructura:
 - Los plugins se auto-registran/des-registran en on_enable/on_disable
 """
 import os
+from typing import Dict, Any
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
                                QTabWidget, QWidget, QFormLayout,
                                QLineEdit, QComboBox, QSpinBox,
@@ -1393,6 +1394,7 @@ class SettingsDialog(QDialog):
     def _save_settings(self):
         """Guarda core + plugins."""
         import time
+        from core.settings_manager import settings_manager
         t0 = time.perf_counter()
 
         logger.info("💾 [save] Iniciando guardado de settings")
@@ -1515,26 +1517,123 @@ class SettingsDialog(QDialog):
 
         # === APLICAR PLUGINS (apply_changes de cada ConfigTab) ===
         plugin_reports = []
+        staged_advanced_all: Dict[str, Any] = {}
+        staged_detection_all: Dict[str, Any] = {}
+        staged_plugin_configs: Dict[str, Dict[str, Any]] = {}
+        legacy_writes_done = False
+
         try:
             from core.extension_registry import get_extension_registry
             from core.extensions.interfaces import ConfigTab
 
             registry = get_extension_registry()
-            for tab in registry.get(ConfigTab):
-                try:
-                    if hasattr(tab, 'on_save'):
-                        success = tab.on_save()
-                        plugin_reports.append((tab.get_id(), success))
-                        if not success:
-                            logger.warning(f"⚠️ Plugin tab '{tab.get_id()}' falló al guardar")
-                except Exception as e:
-                    logger.error(f"❌ Error guardando plugin tab: {e}", exc_info=True)
-        except Exception as e:
-            logger.debug(f"Error aplicando plugins: {e}")
+            tabs = registry.get(ConfigTab)
+            logger.debug(f"🔧 [save] Procesando {len(tabs)} ConfigTab(s)")
 
-        # ✅ Recargar advanced_config DESPUÉS de aplicar plugins
-        from utils.config_loader import advanced_config
-        advanced_config.reload()
+            for tab in tabs:
+                tab_id = "unknown"
+                try:
+                    tab_id = tab.get_id() if hasattr(tab, "get_id") else str(tab)
+
+                    # 1. Llamar a apply_changes (o on_save legacy)
+                    method = None
+                    if hasattr(tab, "apply_changes"):
+                        method = tab.apply_changes
+                    elif hasattr(tab, "on_save"):
+                        method = tab.on_save
+
+                    success = True
+                    if method is not None:
+                        try:
+                            result = method()
+                            success = bool(result) if result is not None else True
+                        except Exception as e:
+                            logger.error(
+                                f"❌ Error en apply_changes de '{tab_id}': {e}",
+                                exc_info=True,
+                            )
+                            success = False
+
+                    plugin_reports.append((tab_id, success))
+
+                    # 2. Recolectar cambios staged SI el tab usa el nuevo patrón
+                    if hasattr(tab, "get_staged_changes"):
+                        staged = tab.get_staged_changes()
+                        adv = staged.get("advanced", {})
+                        det = staged.get("detection", {})
+                        pc = staged.get("plugin_config", {})
+
+                        if adv:
+                            staged_advanced_all.update(adv)
+                        if det:
+                            staged_detection_all.update(det)
+                        if pc:
+                            staged_plugin_configs[tab_id] = pc
+
+                        # Si el tab tiene cambios staged → es nuevo patrón
+                        if adv or det or pc:
+                            logger.debug(
+                                f"🔧 [save] '{tab_id}' usa staging "
+                                f"(adv={len(adv)}, det={len(det)}, pc={len(pc)})"
+                            )
+                        else:
+                            # NO usó staging → probablemente escribió directo
+                            logger.debug(
+                                f"🔧 [save] '{tab_id}' sin cambios staged "
+                                f"(probablemente legacy directo)"
+                            )
+
+                except Exception as e:
+                    logger.error(
+                        f"❌ Error procesando ConfigTab '{tab_id}': {e}",
+                        exc_info=True,
+                    )
+                    plugin_reports.append((tab_id, False))
+
+            # ✅ 3. Aplicar staged en batch (UNA sola escritura)
+            if staged_advanced_all:
+                try:
+                    from core.settings_manager import settings_manager
+                    current = settings_manager.get_advanced_settings()
+                    current.update(staged_advanced_all)
+                    settings_manager.save_advanced_settings(current)
+                    legacy_writes_done = True
+                    logger.debug(
+                        f"✅ [save] staged_advanced aplicado: "
+                        f"{list(staged_advanced_all.keys())[:10]}"
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Error aplicando staged_advanced: {e}", exc_info=True)
+
+            if staged_detection_all:
+                try:
+                    from core.settings_manager import settings_manager
+                    current = settings_manager.get_detection_settings()
+                    current.update(staged_detection_all)
+                    settings_manager.save_detection_settings(current)
+                    logger.debug(
+                        f"✅ [save] staged_detection aplicado: "
+                        f"{list(staged_detection_all.keys())}"
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Error aplicando staged_detection: {e}", exc_info=True)
+
+            for tab_id, cfg in staged_plugin_configs.items():
+                try:
+                    from core.settings_manager import settings_manager
+                    settings_manager.set_plugin_config(tab_id, cfg)
+                except Exception as e:
+                    logger.error(f"❌ Error guardando plugin_config de {tab_id}: {e}")
+
+            # ✅ 4. Recargar advanced_config tras todos los cambios
+            try:
+                from utils.config_loader import advanced_config
+                advanced_config.reload()
+            except Exception as e:
+                logger.debug(f"Error recargando advanced_config: {e}")
+
+        except Exception as e:
+            logger.error(f"❌ Error aplicando plugins: {e}", exc_info=True)
 
         # === ChangeDetector ===
         new_advanced_full = settings_manager.get_advanced_settings()
@@ -1572,3 +1671,40 @@ class SettingsDialog(QDialog):
 
         self.settings_changed.emit(report, modules)
         self.accept()
+
+    def _apply_staged_advanced(self, changes: dict):
+        """Aplica cambios en advanced_settings en batch (UNA escritura)."""
+        try:
+            from core.settings_manager import settings_manager
+
+            # ✅ Leer el estado actual UNA vez
+            current = settings_manager.get_advanced_settings()
+
+            # ✅ Aplicar cambios acumulados de TODOS los tabs
+            current.update(changes)
+
+            # ✅ Guardar UNA vez
+            settings_manager.save_advanced_settings(current)
+
+            logger.debug(
+                f"✅ [staged_advanced] {len(changes)} cambios aplicados: "
+                f"{list(changes.keys())[:10]}"
+            )
+        except Exception as e:
+            logger.error(f"❌ Error aplicando staged_advanced: {e}", exc_info=True)
+
+    def _apply_staged_detection(self, changes: dict):
+        """Aplica cambios en detection_settings en batch."""
+        try:
+            from core.settings_manager import settings_manager
+
+            current = settings_manager.get_detection_settings()
+            current.update(changes)
+            settings_manager.save_detection_settings(current)
+
+            logger.debug(
+                f"✅ [staged_detection] {len(changes)} cambios aplicados: "
+                f"{list(changes.keys())[:10]}"
+            )
+        except Exception as e:
+            logger.error(f"❌ Error aplicando staged_detection: {e}", exc_info=True)

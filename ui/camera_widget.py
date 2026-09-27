@@ -857,12 +857,6 @@ class CameraWidget(QFrame):
     # ==================== CLEANUP ====================
 
     def cleanup(self):
-        try:
-            from audio.audio_manager import audio_manager
-            audio_manager.stop_camera_audio(self.camera.id)
-        except Exception:
-            pass
-
         self._tm.stop_group(self._owner)
         self._display_timer_running = False
         self._empty_cycles = 0

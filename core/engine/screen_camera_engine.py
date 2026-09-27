@@ -16,6 +16,8 @@ from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QApplication
 
 from core.models import CameraDevice, CameraStatus
+from core.event_bus import get_event_bus
+from core.events import RECORDING_STARTED, RECORDING_STOPPED, FRAME_READY
 from utils.logger import get_logger
 from utils.config_loader import advanced_config
 from utils.performance import FrameScheduler
@@ -318,13 +320,16 @@ class ScreenCameraThread(QThread):
                             ).copy()
                             self.frame_ready.emit(qt_image)
 
-                            # 🔍 DEBUG: Emitir cada 100 frames
-                            if self._frame_count % 100 == 0:
-                                logger.debug(
-                                    f"📤 [capture] Pantalla: emitidos={self._frames_processed}, "
-                                    f"saltados={self._frames_skipped}, "
-                                    f"frame_count={self._frame_count}"
-                                )
+                            if self._frame_count % 5 == 0:
+                                try:
+                                    get_event_bus().emit(
+                                        FRAME_READY,
+                                        camera_id=self.camera.id,
+                                        frame=frame_display,
+                                        timestamp=time.time(),
+                                    )
+                                except Exception as e:
+                                    logger.debug(f"Error emitiendo FRAME_READY: {e}")
                         except Exception as e:
                             # 🔍 DEBUG: Fallo emitiendo
                             logger.debug(
@@ -338,6 +343,15 @@ class ScreenCameraThread(QThread):
                                     ch * w_disp, QImage.Format_RGB888
                                 ).copy()
                                 self.frame_ready.emit(qt_image)
+                                try:
+                                    get_event_bus().emit(
+                                        FRAME_READY,
+                                        camera_id=self.camera.id,
+                                        frame=frame_display,
+                                        timestamp=time.time(),
+                                    )
+                                except Exception as e:
+                                    logger.debug(f"Error emitiendo FRAME_READY: {e}")
                             except Exception as e2:
                                 logger.debug(
                                     f"❌ [capture] Fallback también falló: {e2}"
@@ -371,66 +385,41 @@ class ScreenCameraThread(QThread):
                 self.error_occurred.emit("Timeout: Pantalla sin respuesta")
                 self._set_status(CameraStatus.ERROR)
 
-    def _is_audio_active(self) -> bool:
-        try:
-            from audio.audio_manager import audio_manager
-            return audio_manager.is_camera_audio_active(self.camera.id)
-        except Exception:
-            return False
-
-    def start_recording(self, output_path: str = None, codec: str = None, fps: int = None) -> bool:
+    def start_recording(self, output_path: str = None, codec: str = None,
+                    fps: int = None) -> bool:
         try:
             from core.settings_manager import settings_manager
             from utils.av_recorder import AVRecorder
 
             settings = settings_manager.get_capture_settings()
-
             if fps is None:
                 fps = settings.video_fps
             if codec is None:
                 codec = settings.video_codec
 
+            video_resolution = settings.video_resolution
+            self._record_width = video_resolution.width
+            self._record_height = video_resolution.height
             self._recording_fps = fps
-
-            # 🔍 DEBUG: Inicio de grabación
-            logger.debug(
-                f"🎬 [rec] Pantalla: path={output_path}, codec={codec}, "
-                f"fps={fps}, size={self._record_width}x{self._record_height}"
-            )
 
             expected_ext = f".{settings.video_format.value}"
             current_ext = os.path.splitext(output_path)[1].lower()
             if current_ext != expected_ext:
                 output_path = os.path.splitext(output_path)[0] + expected_ext
-                logger.debug(
-                    f"🎬 [rec] Extensión corregida: {current_ext} → {expected_ext}"
-                )
 
             self._recording_path = output_path
             directory = os.path.dirname(output_path)
             if directory and not os.path.exists(directory):
                 os.makedirs(directory, exist_ok=True)
 
-            if self._last_frame_original is None:
-                for _ in range(30):
-                    if self._last_frame_original is not None:
-                        break
-                    time.sleep(0.1)
-                if self._last_frame_original is None:
-                    logger.error("❌ [rec] No hay frame original para iniciar grabación")
-                    return False
-
-            record_width = self._record_width or self._screen_width
-            record_height = self._record_height or self._screen_height
-
-            audio_active = self._is_audio_active()
-
+            # ✅ El Core solo graba VIDEO. Los plugins de audio se
+            # suscriben a RECORDING_STARTED para escribir su propio WAV.
             self._av_recorder = AVRecorder(
                 output_path=output_path,
                 fps=fps,
-                video_size=(record_width, record_height),
+                video_size=(self._record_width, self._record_height),
                 video_codec=codec,
-                audio_enabled=audio_active,
+                audio_enabled=False,
             )
 
             if not self._av_recorder.start():
@@ -440,7 +429,22 @@ class ScreenCameraThread(QThread):
             self._is_recording = True
             self._record_frames_count = 0
             self._set_status(CameraStatus.RECORDING)
-            logger.info(f"✅ Grabación pantalla iniciada ({self._av_recorder.get_backend()})")
+            logger.info(f"✅ Grabación video iniciada ({self._av_recorder.get_backend()})")
+
+            # ✅ Emitir evento
+            try:
+                get_event_bus().emit(
+                    RECORDING_STARTED,
+                    camera_id=self.camera.id,
+                    camera_name=self.camera.name,
+                    path=output_path,
+                    fps=fps,
+                    width=self._record_width,
+                    height=self._record_height,
+                )
+            except Exception as e:
+                logger.debug(f"Error emitiendo RECORDING_STARTED: {e}")
+
             return True
         except Exception as e:
             logger.error(f"❌ Error iniciando grabación: {e}", exc_info=True)
@@ -450,20 +454,21 @@ class ScreenCameraThread(QThread):
         if self._av_recorder is not None:
             try:
                 path = self._av_recorder.stop()
-                backend = self._av_recorder.get_backend()
                 self._av_recorder = None
                 self._is_recording = False
                 self._set_status(CameraStatus.CONNECTED)
 
-                # 🔍 DEBUG: Verificar archivo final
-                if path and os.path.exists(path):
-                    size = os.path.getsize(path)
-                    logger.info(
-                        f"⏹ Grabación pantalla detenida ({backend}): "
-                        f"{path} ({size/1024/1024:.2f} MB)"
+                # ✅ Emitir evento
+                try:
+                    get_event_bus().emit(
+                        RECORDING_STOPPED,
+                        camera_id=self.camera.id,
+                        camera_name=self.camera.name,
+                        path=path,
                     )
-                else:
-                    logger.warning(f"⚠️ [rec] Archivo NO existe: {path}")
+                except Exception as e:
+                    logger.debug(f"Error emitiendo RECORDING_STOPPED: {e}")
+
                 return path
             except Exception as e:
                 logger.error(f"Error deteniendo grabación: {e}")

@@ -1,11 +1,11 @@
 """
-Motor de captura de video para cámaras IP - v4
-- FASE 3: FrameAnalyzers del ExtensionRegistry
-- Fallback a modo legacy (motion_detector/face_recognizer directos)
-- ThreadPoolExecutor para lecturas con timeout
-- QImage.Format_BGR888
-- AdaptiveThrottle
-- AVRecorder dual
+Motor de captura de video para cámaras IP - v5 (post-limpieza)
+
+Cambios v5:
+- Eliminados métodos legacy (setup_detection, _process_detections_legacy)
+- Eliminados flags legacy (motion_detection_enabled, face_detection_enabled)
+- Solo FrameAnalyzers del ExtensionRegistry
+- Lazy load de analyzers corregido
 """
 import cv2
 import numpy as np
@@ -22,6 +22,8 @@ from PySide6.QtGui import QImage
 from core.engine.screen_camera_engine import ScreenCameraManager
 from core.engine.local_camera_engine import LocalCameraManager
 from core.models import CameraDevice, CameraStatus
+from core.event_bus import get_event_bus
+from core.events import RECORDING_STARTED, RECORDING_STOPPED, FRAME_READY
 from utils.logger import get_logger
 from utils.config_loader import advanced_config
 from utils.performance import FrameScheduler
@@ -127,22 +129,9 @@ class CameraThread(QThread):
 
         self._last_timeout_check = 0
 
-        # Detecciones (modo legacy)
-        self.motion_detection_enabled = False
-        self.face_detection_enabled = False
-        self.motion_detector = None
-        self.face_recognizer = None
-        self._detection_counter = 0
-
         # FASE 3: FrameAnalyzers del registry
         self._frame_analyzers: Optional[List] = None
-
-        # Escaneo
-        self.document_scanning_enabled = False
-        self.scan_manager = None
-        self._scan_counter = 0
-        self._last_scan_result = None
-        self._auto_correct = True
+        self._detection_counter = 0
 
         if self._gpu_acceleration:
             try:
@@ -151,11 +140,6 @@ class CameraThread(QThread):
                     self._gpu_acceleration = False
             except Exception:
                 self._gpu_acceleration = False
-
-        logger.debug(
-            f"🔧 [init] CameraThread: id={camera.id}, name={camera.name}, "
-            f"ip={camera.ip}:{camera.port}, fps={self.fps}"
-        )
 
     def reload_config(self):
         cfg = advanced_config.get_all()
@@ -171,15 +155,11 @@ class CameraThread(QThread):
         if hasattr(self, '_frame_scheduler'):
             self._frame_scheduler.set_fps(self.fps)
 
-        # FASE 3: reset analyzers para que se recarguen
         self._frame_analyzers = None
-
-        logger.debug(f"🔄 [reload] {self.camera.name}")
 
     def refresh_analyzers(self):
         """Fuerza recarga de FrameAnalyzers en el próximo frame."""
         self._frame_analyzers = None
-        logger.debug(f"🔄 Analyzers marcados para recarga: {self.camera.name}")
 
     def run(self):
         with QMutexLocker(self._mutex):
@@ -203,119 +183,20 @@ class CameraThread(QThread):
 
         self._connect_and_stream(self._video_url)
 
-    def setup_document_scanning(self, enabled: bool = True,
-                                tesseract_path: str = None,
-                                auto_correct: bool = True):
-        """
-        Modo legacy: crear ScanManager directo.
-        En FASE 3 ya no se usa si el DocumentAnalyzer está activo.
-        """
-        self.document_scanning_enabled = enabled
-        self._auto_correct = auto_correct
-        if enabled:
-            try:
-                from plugins.document_scanner.scan_manager import ScanManager
-                self.scan_manager = ScanManager(tesseract_path=tesseract_path)
-                logger.info(f"✅ Escaneo legacy activado para {self.camera.name}")
-            except Exception as e:
-                logger.error(f"❌ Error activando escaneo: {e}")
-                self.document_scanning_enabled = False
-
-    def setup_detection(self, motion_enabled: bool = False,
-                       face_enabled: bool = False,
-                       motion_sensitivity: int = 25,
-                       motion_min_area: int = 500,
-                       face_tolerance: float = 0.6):
-        """
-        Modo legacy: crear detectores directos.
-        En FASE 3 ya no se usa si los analyzers están activos.
-        """
-        self.motion_detection_enabled = motion_enabled
-        self.face_detection_enabled = face_enabled
-
-        if motion_enabled and self.motion_detector is None:
-            try:
-                from plugins.motion_detector.motion_detector import MotionDetector
-                self.motion_detector = MotionDetector(
-                    sensitivity=motion_sensitivity,
-                    min_area=motion_min_area,
-                    cooldown_seconds=5.0,
-                )
-                logger.info(f"✅ Detección movimiento legacy activada para {self.camera.name}")
-            except Exception as e:
-                logger.error(f"❌ Error activando detección: {e}")
-                self.motion_detection_enabled = False
-
-        if face_enabled and self.face_recognizer is None:
-            try:
-                from plugins.face_recognizer.face_recognizer import FaceRecognizer
-                self.face_recognizer = FaceRecognizer(tolerance=face_tolerance)
-                logger.info(f"✅ Reconocimiento facial legacy activado para {self.camera.name}")
-            except Exception as e:
-                logger.error(f"❌ Error activando reconocimiento: {e}")
-                self.face_detection_enabled = False
-
-    def _process_document_scan(self, frame: np.ndarray):
-        """Modo legacy de escaneo."""
-        self._scan_counter += 1
-        if self._scan_counter % self._scan_frame_skip != 0:
-            return
-        if self.scan_manager is None:
-            return
-        try:
-            result = self.scan_manager.process_frame(
-                frame, auto_correct=self._auto_correct
-            )
-            self._last_scan_result = result
-            if result["document_found"]:
-                self.document_detected.emit(self.camera.id, result)
-            if result["text"]:
-                self.text_recognized.emit(self.camera.id, result["text"])
-        except Exception as e:
-            logger.error(f"Error en escaneo legacy: {e}")
+    # ==================== FASE 3: ANALYZERS ====================
 
     def _process_detections(self, frame: np.ndarray):
-        """
-        Procesa detecciones.
-
-        FASE 3: Intenta usar FrameAnalyzers del ExtensionRegistry.
-        Fallback: modo legacy con motion_detector/face_recognizer directos.
-        """
+        """Procesa detecciones vía FrameAnalyzers del registry."""
         self._detection_counter += 1
         if self._detection_counter % self._detection_frame_skip != 0:
             return
 
-        # Carga lazy de analyzers
         if self._frame_analyzers is None:
             self._frame_analyzers = self._load_frame_analyzers()
-            if self._frame_analyzers:
-                logger.info(
-                    f"🎯 {self.camera.name}: {len(self._frame_analyzers)} "
-                    f"FrameAnalyzer(s) cargados"
-                )
-            else:
-                logger.debug(
-                    f"ℹ️ {self.camera.name}: sin FrameAnalyzers, usando legacy"
-                )
 
-        if self._frame_analyzers:
-            self._process_detections_via_registry(frame)
-        else:
-            self._process_detections_legacy(frame)
+        if not self._frame_analyzers:
+            return
 
-    def _load_frame_analyzers(self) -> list:
-        try:
-            from core.extension_registry import get_extension_registry
-            from core.extensions.interfaces import FrameAnalyzer
-            registry = get_extension_registry()
-            if registry is None:
-                return []
-            return list(registry.get(FrameAnalyzer))
-        except Exception as e:
-            logger.debug(f"Error cargando FrameAnalyzers: {e}")
-            return []
-
-    def _process_detections_via_registry(self, frame: np.ndarray):
         for analyzer in self._frame_analyzers:
             try:
                 if hasattr(analyzer, 'should_run'):
@@ -332,6 +213,18 @@ class CameraThread(QThread):
                     exc_info=True,
                 )
 
+    def _load_frame_analyzers(self) -> list:
+        try:
+            from core.extension_registry import get_extension_registry
+            from core.extensions.interfaces import FrameAnalyzer
+            registry = get_extension_registry()
+            if registry is None:
+                return []
+            return list(registry.get(FrameAnalyzer))
+        except Exception as e:
+            logger.debug(f"Error cargando FrameAnalyzers: {e}")
+            return []
+
     def _dispatch_analyzer_result(self, analyzer, result: dict):
         kind = result.get("kind")
 
@@ -339,10 +232,6 @@ class CameraThread(QThread):
             if result.get("notify", False):
                 rects = result.get("rects", [])
                 self.motion_detected.emit(self.camera.id, rects)
-                logger.debug(
-                    f"🎯 Motion detectado en {self.camera.name}: "
-                    f"{len(rects)} rects"
-                )
         elif kind == "face":
             locations = result.get("locations", [])
             names = result.get("names", [])
@@ -354,53 +243,6 @@ class CameraThread(QThread):
             text = result.get("text", "")
             if text:
                 self.text_recognized.emit(self.camera.id, text)
-        else:
-            logger.debug(
-                f"⚠️ Analyzer {type(analyzer).__name__} "
-                f"devolvió kind desconocido: '{kind}'"
-            )
-
-    def _process_detections_legacy(self, frame: np.ndarray):
-        if self.motion_detection_enabled and self.motion_detector:
-            try:
-                has_motion, rects, _ = self.motion_detector.detect(frame)
-                if has_motion:
-                    self.motion_detected.emit(self.camera.id, rects)
-            except Exception as e:
-                logger.error(f"Error en detección movimiento (legacy): {e}")
-
-        if self.face_detection_enabled and self.face_recognizer:
-            now = time.time()
-            if not hasattr(self, '_last_face_recognition'):
-                self._last_face_recognition = 0
-            if now - self._last_face_recognition < 1.5:
-                return
-            self._last_face_recognition = now
-
-            if self.face_recognizer.is_available():
-                try:
-                    locations, names = self.face_recognizer.recognize(frame)
-                    if names:
-                        self.face_detected.emit(self.camera.id, locations, names)
-                except Exception as e:
-                    logger.error(f"Error en reconocimiento facial (legacy): {e}")
-
-    def _is_audio_active(self) -> bool:
-        try:
-            from audio.audio_manager import audio_manager
-            return audio_manager.is_camera_audio_active(self.camera.id)
-        except Exception:
-            return False
-
-    def _check_frame_timeout_internal(self):
-        if self._is_running() and self.camera.status == CameraStatus.CONNECTED:
-            elapsed = time.time() - self._last_frame_received
-            if elapsed > self._frame_timeout:
-                logger.warning(f"⚠️ Timeout: {self.camera.name} ({elapsed:.1f}s)")
-                self.error_occurred.emit(f"Timeout de video: {self.camera.name}")
-                self._set_status(CameraStatus.ERROR)
-                self._reconnect(self._video_url)
-                self._last_frame_received = time.time()
 
     def _check_connection(self) -> bool:
         base_url = f"http://{self.camera.ip}:{self.camera.port}"
@@ -473,7 +315,7 @@ class CameraThread(QThread):
             return False
 
     def start_recording(self, output_path: str = None, codec: str = None,
-                       fps: int = None) -> bool:
+                    fps: int = None) -> bool:
         try:
             from core.settings_manager import settings_manager
             from utils.av_recorder import AVRecorder
@@ -488,7 +330,6 @@ class CameraThread(QThread):
             self._record_width = video_resolution.width
             self._record_height = video_resolution.height
             self._recording_fps = fps
-            audio_active = self._is_audio_active()
 
             expected_ext = f".{settings.video_format.value}"
             current_ext = os.path.splitext(output_path)[1].lower()
@@ -500,12 +341,14 @@ class CameraThread(QThread):
             if directory and not os.path.exists(directory):
                 os.makedirs(directory, exist_ok=True)
 
+            # ✅ El Core solo graba VIDEO. Los plugins de audio se
+            # suscriben a RECORDING_STARTED para escribir su propio WAV.
             self._av_recorder = AVRecorder(
                 output_path=output_path,
                 fps=fps,
                 video_size=(self._record_width, self._record_height),
                 video_codec=codec,
-                audio_enabled=audio_active,
+                audio_enabled=False,
             )
 
             if not self._av_recorder.start():
@@ -515,7 +358,22 @@ class CameraThread(QThread):
             self._is_recording = True
             self._record_frames_count = 0
             self._set_status(CameraStatus.RECORDING)
-            logger.info(f"✅ Grabación iniciada ({self._av_recorder.get_backend()})")
+            logger.info(f"✅ Grabación video iniciada ({self._av_recorder.get_backend()})")
+
+            # ✅ Emitir evento
+            try:
+                get_event_bus().emit(
+                    RECORDING_STARTED,
+                    camera_id=self.camera.id,
+                    camera_name=self.camera.name,
+                    path=output_path,
+                    fps=fps,
+                    width=self._record_width,
+                    height=self._record_height,
+                )
+            except Exception as e:
+                logger.debug(f"Error emitiendo RECORDING_STARTED: {e}")
+
             return True
         except Exception as e:
             logger.error(f"❌ Error iniciando grabación: {e}", exc_info=True)
@@ -528,6 +386,18 @@ class CameraThread(QThread):
                 self._av_recorder = None
                 self._is_recording = False
                 self._set_status(CameraStatus.CONNECTED)
+
+                # ✅ Emitir evento
+                try:
+                    get_event_bus().emit(
+                        RECORDING_STOPPED,
+                        camera_id=self.camera.id,
+                        camera_name=self.camera.name,
+                        path=path,
+                    )
+                except Exception as e:
+                    logger.debug(f"Error emitiendo RECORDING_STOPPED: {e}")
+
                 return path
             except Exception as e:
                 logger.error(f"Error deteniendo grabación: {e}")
@@ -596,10 +466,11 @@ class CameraThread(QThread):
                         if now - self._last_timeout_check >= 1.0:
                             self._last_timeout_check = now
 
-                        # FASE 3: detecciones (registry o legacy)
-                        if self.document_scanning_enabled and self.scan_manager:
-                            self._process_document_scan(frame)
-                        if self._frame_analyzers or self.motion_detection_enabled or self.face_detection_enabled:
+                        # FASE 3: cargar analyzers lazy ANTES de decidir
+                        if self._frame_analyzers is None:
+                            self._frame_analyzers = self._load_frame_analyzers()
+
+                        if self._frame_analyzers:
                             self._process_detections(frame)
 
                         h, w = frame.shape[:2]
@@ -622,6 +493,17 @@ class CameraThread(QThread):
                                 QImage.Format_BGR888
                             ).copy()
                             self.frame_ready.emit(qt_image)
+                            # ✅ Emitir FRAME_READY al event bus (para plugins que quieran el frame)
+                            if self._frame_count % 5 == 0:
+                                try:
+                                    get_event_bus().emit(
+                                        FRAME_READY,
+                                        camera_id=self.camera.id,
+                                        frame=frame,
+                                        timestamp=time.time(),
+                                    )
+                                except Exception as e:
+                                    logger.debug(f"Error emitiendo FRAME_READY: {e}")
                         except Exception:
                             try:
                                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -631,6 +513,15 @@ class CameraThread(QThread):
                                     QImage.Format_RGB888
                                 ).copy()
                                 self.frame_ready.emit(qt_image)
+                                try:
+                                    get_event_bus().emit(
+                                        FRAME_READY,
+                                        camera_id=self.camera.id,
+                                        frame=frame,
+                                        timestamp=time.time(),
+                                    )
+                                except Exception as e:
+                                    logger.debug(f"Error emitiendo FRAME_READY: {e}")
                             except Exception:
                                 pass
 
@@ -764,7 +655,6 @@ class CameraThread(QThread):
         if hasattr(self, '_adaptive_throttle'):
             self._adaptive_throttle.reset()
 
-        # FASE 3: notificar analyzers
         if self._frame_analyzers:
             for analyzer in self._frame_analyzers:
                 try:
@@ -964,14 +854,12 @@ class CameraManager:
         return [c for c in self.cameras.values() if c.status == CameraStatus.CONNECTED]
 
     def refresh_all_analyzers(self):
-        """FASE 3: fuerza recarga de analyzers en todos los threads."""
         for camera_id, thread in list(self.threads.items()):
             try:
                 if hasattr(thread, 'refresh_analyzers'):
                     thread.refresh_analyzers()
             except Exception as e:
                 logger.debug(f"Error refresh analyzers {camera_id}: {e}")
-        # local
         for camera_id in list(self.local_camera_ids):
             thread = self.local_manager.get_thread(camera_id)
             if thread and hasattr(thread, 'refresh_analyzers'):

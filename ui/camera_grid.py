@@ -23,8 +23,6 @@ class CameraGrid(QWidget):
     recording_toggled = Signal(int, bool)
     camera_removed = Signal(int)
     add_camera_requested = Signal()
-    flash_toggled = Signal(int, bool)
-    auto_flash_toggled = Signal(int, bool)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -181,24 +179,22 @@ class CameraGrid(QWidget):
         """Añade widget de cámara al grid"""
         if camera.id in self.cameras:
             return self.cameras[camera.id]
-        
+
         self._clear_empty_message()
-        
+
         widget = CameraWidget(camera)
         widget.setVisible(True)
         widget.capture_requested.connect(self._forward_capture)
         widget.recording_toggled.connect(self._forward_recording)
         widget.camera_removed.connect(self._forward_remove)
         widget.toggle_expand_requested.connect(self._toggle_widget_expand)
-        widget.flash_toggled.connect(self._forward_flash)
-        widget.auto_flash_toggled.connect(self._forward_auto_flash)
         widget.expand_finished.connect(self._on_expand_finished)
-        
+
         widget.mousePressEvent = lambda e: self._on_widget_click(widget, e)
-        
+
         self.cameras[camera.id] = widget
         self._rearrange_grid()
-        
+
         logger.debug(f"Widget añadido para {camera.name}")
         return widget
     

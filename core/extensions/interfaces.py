@@ -667,100 +667,49 @@ class NotificationsProvider(Protocol):
 # ============================================================
 
 @runtime_checkable
-class CameraWidgetExtension(Protocol):
+class UIExtension(Protocol):
     """
-    Extiende el CameraWidget de una cámara específica.
+    Extensión genérica de UI.
 
-    Uso: un plugin puede añadir botones, indicadores o controles
-    al header de cada cámara SIN modificar el Core.
+    Cualquier plugin puede inyectar widgets en cualquier punto
+    de extensión declarado por el Core.
 
-    Ejemplo:
-        - Plugin audio: añade botón 🔊, mute 🔇, VU meter
-        - Plugin motion: añade botón flash 🔦, auto-flash ⚡
-        - Plugin recording: añade botón de marcadores
+    Puntos de extensión actuales (target, slot):
+      ("camera_widget", "header")   -> botones en el header de cada cámara
+      ("camera_widget", "footer")   -> VU meter grande bajo el video
+      ("image_preview", "info_bar") -> botones en el diálogo de imagen
+      ("video_preview", "info_bar") -> botones en el visor de video
+      ("main_toolbar", "left")      -> botones a la izquierda del toolbar
+      ("main_toolbar", "right")     -> botones a la derecha del toolbar
+      ("settings_dialog", "tabs")   -> tabs adicionales (futuro)
+      ("status_bar", "permanent")   -> widgets permanentes en la status bar
     """
 
-    def get_widgets(self, camera_id: int, camera_widget) -> List[QWidget]:
+    def get_id(self) -> str:
+        """ID único de la extensión (para logs y desregistro)."""
+        ...
+
+    def get_target(self) -> str:
+        """Componente objetivo (ej. 'camera_widget')."""
+        ...
+
+    def get_slot(self) -> str:
+        """Slot dentro del target (ej. 'header')."""
+        ...
+
+    def get_widgets(self, context: dict) -> List[QWidget]:
         """
-        Retorna widgets a añadir al CameraWidget.
+        Retorna los widgets a inyectar.
 
-        Args:
-            camera_id: ID de la cámara
-            camera_widget: instancia del CameraWidget (para conectar señales)
-
-        Returns:
-            Lista de widgets (se añaden al header, en orden de prioridad)
+        `context` incluye:
+          - camera_widget:  {camera_id, camera, widget}
+          - image_preview:  {dialog, image, camera_name}
+          - video_preview:  {preview, path}
+          - main_toolbar:   {main_window}
+          - status_bar:     {main_window}
         """
         ...
 
     def get_priority(self) -> int:
-        """Prioridad (menor = más a la izquierda)."""
-        ...
-
-
-@runtime_checkable
-class DialogExtension(Protocol):
-    """
-    Extiende un diálogo Core específico (ImagePreview, etc.).
-
-    Uso: un plugin puede añadir botones o secciones a un diálogo
-    existente sin modificarlo.
-
-    Ejemplo:
-        - Plugin image_enhancer: añade botón "✨ Mejorar Imagen"
-          al ImagePreviewDialog
-    """
-
-    def get_target_dialog(self) -> str:
-        """
-        Retorna el ID del diálogo a extender.
-
-        IDs disponibles:
-        - "image_preview": ImagePreviewDialog
-        - "video_preview": VideoPreview (futuro)
-        - "settings": SettingsDialog (futuro)
-        """
-        ...
-
-    def get_widgets(self, dialog, **kwargs) -> List[QWidget]:
-        """
-        Retorna widgets a añadir al diálogo.
-
-        Args:
-            dialog: instancia del diálogo
-            **kwargs: contexto adicional (ej. image=image, camera=camera)
-
-        Returns:
-            Lista de widgets a añadir.
-        """
-        ...
-
-    def get_priority(self) -> int:
-        ...
-
-
-@runtime_checkable
-class ToolbarContribution(Protocol):
-    """
-    Añade botones a la toolbar principal de MainWindow.
-
-    Uso: un plugin puede añadir un botón global (ej. "🎤 Mic PC").
-
-    Ejemplo:
-        - Plugin audio: añade botón "🎤 Mic PC"
-    """
-
-    def get_buttons(self, main_window) -> List[QWidget]:
-        """
-        Retorna botones a añadir a la toolbar.
-
-        Args:
-            main_window: instancia de MainWindow
-
-        Returns:
-            Lista de widgets.
-        """
-        ...
-
-    def get_priority(self) -> int:
+        """Orden (menor = más a la izquierda/arriba)."""
         ...

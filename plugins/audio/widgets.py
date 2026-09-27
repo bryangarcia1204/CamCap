@@ -1,29 +1,15 @@
-"""
-Widgets de audio inyectables en CameraWidget y toolbar.
+"""Widgets de audio inyectables via UIExtension."""
+from PySide6.QtWidgets import QPushButton, QMessageBox
 
-Este módulo es la fuente de verdad para:
-- Botón 🔊 de audio por cámara
-- Botón 🔇 de mute
-- VU meter compacto y grande
-- Botón 🎤 Mic PC en toolbar
-"""
-from PySide6.QtWidgets import QPushButton, QWidget, QMessageBox
-from PySide6.QtCore import Qt
-
-from ui.audio_level_widget import AudioLevelWidget
 from utils.logger import get_logger
 
 logger = get_logger("Plugin.AudioWidgets")
 
 
-def create_audio_widgets(camera_id: int, camera_widget):
-    """
-    Crea los widgets de audio para una cámara.
-
-    Returns:
-        Lista de [audio_btn, mute_btn, audio_level_widget]
-    """
+def create_audio_widgets(camera_id: int, camera, camera_widget):
+    """Crea los widgets de audio para una cámara."""
     from .audio_manager import audio_manager
+    from ui.audio_level_widget import AudioLevelWidget
 
     # === Botón de audio ===
     audio_btn = QPushButton("🔊")
@@ -70,27 +56,15 @@ def create_audio_widgets(camera_id: int, camera_widget):
         }
     """)
 
-    # === VU meter ===
+    # === VU meter compacto (header) ===
     audio_level_widget = AudioLevelWidget(mode="compact")
     audio_level_widget.setFixedWidth(60)
     audio_level_widget.setFixedHeight(10)
     audio_level_widget.setVisible(False)
 
-    # === Estado interno ===
-    state = {
-        "timer_running": False,
-    }
+    state = {"timer_running": False}
 
-    # === Callbacks ===
     def _toggle_audio(checked: bool):
-        from .audio_manager import audio_manager
-        camera = camera_widget.camera
-
-        logger.debug(
-            f"🔊 [plugin audio] {camera.name}: "
-            f"{'activar' if checked else 'desactivar'}"
-        )
-
         if checked:
             success = audio_manager.start_camera_audio(
                 camera_id=camera.id,
@@ -118,9 +92,6 @@ def create_audio_widgets(camera_id: int, camera_widget):
             _stop_timer()
 
     def _toggle_mute(checked: bool):
-        from .audio_manager import audio_manager
-        camera = camera_widget.camera
-
         audio_manager.set_muted(camera.id, checked)
         if checked:
             mute_btn.setText("🔇")
@@ -130,28 +101,26 @@ def create_audio_widgets(camera_id: int, camera_widget):
             mute_btn.setToolTip("Silenciar audio")
 
     def _update_audio_level():
-        from .audio_manager import audio_manager
-        level = audio_manager.get_level(camera_widget.camera.id)
+        level = audio_manager.get_level(camera.id)
         audio_level_widget.set_level(level)
 
     def _start_timer():
         from utils.timer_manager import timer_manager
-        name = f"plugin_audio.{camera_widget.camera.id}.level"
         from utils.config_loader import advanced_config
+        name = f"plugin_audio.{camera.id}.level"
         interval = advanced_config.get("audio_meter_interval", 50)
         timer_manager.create(name, interval, _update_audio_level, start=True)
         state["timer_running"] = True
 
     def _stop_timer():
         from utils.timer_manager import timer_manager
-        name = f"plugin_audio.{camera_widget.camera.id}.level"
+        name = f"plugin_audio.{camera.id}.level"
         timer_manager.stop(name)
         state["timer_running"] = False
 
     audio_btn.clicked.connect(_toggle_audio)
     mute_btn.clicked.connect(_toggle_mute)
 
-    # Guardar referencias en el widget para acceso externo
     camera_widget._plugin_audio = {
         "audio_btn": audio_btn,
         "mute_btn": mute_btn,
@@ -163,8 +132,43 @@ def create_audio_widgets(camera_id: int, camera_widget):
     return [audio_btn, mute_btn, audio_level_widget]
 
 
+def create_vu_meter_big(camera_id: int, camera, camera_widget):
+    """VU meter grande para el slot 'footer'."""
+    from .audio_manager import audio_manager
+    from ui.audio_level_widget import AudioLevelWidget
+
+    vu = AudioLevelWidget(mode="horizontal")
+    vu.setMinimumHeight(14)
+    vu.setMaximumHeight(20)
+    vu.setVisible(False)
+
+    # Timer para actualizar el VU grande
+    def _update_big():
+        level = audio_manager.get_level(camera.id)
+        vu.set_level(level)
+
+    def _on_audio_toggled():
+        active = audio_manager.is_camera_audio_active(camera.id)
+        vu.setVisible(active)
+        if active:
+            from utils.timer_manager import timer_manager
+            from utils.config_loader import advanced_config
+            name = f"plugin_audio.{camera.id}.vu_big"
+            interval = advanced_config.get("audio_meter_interval", 50)
+            timer_manager.create(name, interval, _update_big, start=True)
+        else:
+            from utils.timer_manager import timer_manager
+            timer_manager.stop(f"plugin_audio.{camera.id}.vu_big")
+
+    camera_widget._plugin_audio_big = {
+        "vu": vu,
+        "on_toggle": _on_audio_toggled,
+    }
+    return [vu]
+
+
 def create_local_audio_button(main_window):
-    """Crea el botón '🎤 Mic PC' para la toolbar."""
+    """Botón '🎤 Mic PC' para la toolbar."""
     from .audio_manager import audio_manager
 
     btn = QPushButton("🎤 Mic PC")
@@ -200,7 +204,7 @@ def create_local_audio_button(main_window):
                 QMessageBox.warning(
                     main_window, "Error",
                     "No se pudo activar el micrófono.\n\n"
-                    "Verifica que pyaudio esté instalado:\n  pip install pyaudio"
+                    "Verifica que pyaudio esté instalado:\n  pip install pyaudio",
                 )
         else:
             audio_manager.stop_local_audio()
@@ -209,3 +213,46 @@ def create_local_audio_button(main_window):
 
     btn.clicked.connect(_toggle_local_audio)
     return btn
+
+
+class AudioUIExtension:
+    """UIExtension que inyecta widgets de audio."""
+
+    def __init__(self, target: str, slot: str, priority: int = 110):
+        self._target = target
+        self._slot = slot
+        self._priority = priority
+
+    def get_id(self) -> str:
+        return f"audio.{self._target}.{self._slot}"
+
+    def get_target(self) -> str:
+        return self._target
+
+    def get_slot(self) -> str:
+        return self._slot
+
+    def get_priority(self) -> int:
+        return self._priority
+
+    def get_widgets(self, context: dict):
+        if self._target == "camera_widget":
+            camera = context.get("camera")
+            camera_widget = context.get("widget")
+            camera_id = context.get("camera_id")
+            if camera is None or camera_widget is None:
+                return []
+            # Solo cámaras IP soportan audio (screen/local no)
+            if camera.is_screen or camera.is_local:
+                return []
+            if self._slot == "header":
+                return create_audio_widgets(camera_id, camera, camera_widget)
+            elif self._slot == "footer":
+                return create_vu_meter_big(camera_id, camera, camera_widget)
+            return []
+        elif self._target == "main_toolbar":
+            main_window = context.get("main_window")
+            if main_window is None:
+                return []
+            return [create_local_audio_button(main_window)]
+        return []

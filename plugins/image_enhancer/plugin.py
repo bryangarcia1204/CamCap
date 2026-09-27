@@ -38,45 +38,18 @@ class ImageEnhancerPlugin(BasePlugin):
 
     def on_enable(self) -> bool:
         try:
-            # 1. Provider
-            from core.extensions.interfaces import ImageEnhancerProvider
-            self.register_extension(
-                ImageEnhancerProvider,
-                self,
-                priority=50,
-            )
+            from core.extensions.interfaces import UIExtension
+            from .widgets import ImageEnhancerUIExtension
 
-            # ✅ NUEVO: DialogExtension (para botón "✨ Mejorar")
-            from core.extensions.interfaces import DialogExtension
             self.register_extension(
-                DialogExtension,
-                self,
+                UIExtension,
+                ImageEnhancerUIExtension(),
                 priority=100,
             )
-
-            # 2. ConfigTab
-            from core.extensions.interfaces import ConfigTab
-            from core.extensions.config_tab_provider import PluginConfigTabProvider
-            from plugins.image_enhancer.config_tab import ImageEnhancerConfigTab
-
-            self._tab_provider = PluginConfigTabProvider(
-                plugin_name=self.NAME,
-                plugin_context=self.context,
-                tab_class=ImageEnhancerConfigTab,
-                tab_id="plugin_image_enhancer",
-                title="Image Enhancer",
-                icon="🎨",
-            )
-            self.register_extension(
-                ConfigTab,
-                self._tab_provider,
-                priority=120,
-            )
-
-            logger.info("✅ ImageEnhancerPlugin activado (provider + ConfigTab)")
+            self.logger.info("✅ ImageEnhancer activado (UIExtension)")
             return True
         except Exception as e:
-            logger.error(f"❌ Error activando: {e}", exc_info=True)
+            self.logger.error(f"❌ Error activando: {e}", exc_info=True)
             return False
 
     def on_disable(self):

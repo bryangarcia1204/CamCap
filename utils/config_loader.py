@@ -58,6 +58,7 @@ class AdvancedConfig:
         # DETECCIÓN DE MOVIMIENTO
         # ============================================================
         # Básicos
+        "motion_enabled": False,          # ← NUEVO: activación del plugin
         "detection_frame_skip": 3,
         "motion_method": "adaptive",
         "motion_use_shadow_removal": True,
@@ -81,6 +82,7 @@ class AdvancedConfig:
         # RECONOCIMIENTO FACIAL
         # ============================================================
         # Básicos
+        "face_enabled": False, 
         "face_detector_model": "sface",
         "face_auto_register_unknown": True,
         "face_min_face_size": 20,
@@ -226,6 +228,7 @@ class AdvancedConfig:
             "throttle_gpu_measure_sample",
         ],
         "motion": [
+            "motion_enabled",
             "detection_frame_skip", "motion_method", "motion_use_shadow_removal",
             "motion_use_shape_filter", "motion_min_density",
             "motion_min_consecutive_frames", "motion_learning_rate",
@@ -236,6 +239,7 @@ class AdvancedConfig:
             "motion_knn_dist2_threshold",
         ],
         "face": [
+            "face_enabled",
             "face_detector_model", "face_auto_register_unknown",
             "face_min_face_size", "face_recognition_scale",
             "face_detector_score_threshold", "face_nms_threshold",

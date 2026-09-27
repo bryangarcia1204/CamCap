@@ -34,7 +34,6 @@ from ui.settings_dialog import SettingsDialog
 from ui.image_preview import ImagePreview
 from ui.loading_manager import LoadingManager, LoadingContext
 from ui.system_monitor_widget import SystemMonitorWidget
-from audio.audio_manager import audio_manager
 from utils.logger import get_logger
 from utils.system_monitor import system_monitor
 from utils.timer_manager import timer_manager
@@ -176,8 +175,6 @@ class MainWindow(QMainWindow):
         self.camera_grid.recording_toggled.connect(self._on_recording_toggle)
         self.camera_grid.camera_removed.connect(self._on_camera_removed)
         self.camera_grid.add_camera_requested.connect(self._show_settings)
-        self.camera_grid.flash_toggled.connect(self._on_flash_toggle)
-        self.camera_grid.auto_flash_toggled.connect(self._on_auto_flash_toggled)
         splitter.addWidget(self.camera_grid)
 
         splitter.setSizes([300, 900])
@@ -257,51 +254,22 @@ class MainWindow(QMainWindow):
         settings_menu.addAction(clear_data_action)
 
     def _apply_ui_extensions(self):
+        """Aplica TODAS las UIExtension (toolbar, menu, status bar, dock)."""
         logger.info("🎨 Aplicando extensiones de UI...")
         try:
             from core.extension_registry import get_extension_registry
+            from core.extensions.interfaces import UIExtension
             registry = get_extension_registry()
         except Exception as e:
             logger.debug(f"⚠️ Registry no disponible: {e}")
             return
 
-        try:
-            from core.extensions.interfaces import ToolbarProvider
-            providers = registry.get(ToolbarProvider)
-            toolbar = getattr(self, 'main_toolbar', None)
-            if toolbar is not None:
-                for provider in providers:
-                    try:
-                        for w in provider.get_widgets():
-                            if w.parent() is None:
-                                toolbar.addWidget(w)
-                    except Exception as e:
-                        logger.error(f"❌ ToolbarProvider falló: {e}")
-        except Exception as e:
-            logger.debug(f"⚠️ Error toolbar providers: {e}")
+        # Toolbar (slots "left" y "right")
+        toolbar = getattr(self, "main_toolbar", None)
+        if toolbar is not None:
+            self._apply_toolbar_extensions(toolbar)
 
-        try:
-            from core.extensions.interfaces import MenuProvider
-            providers = registry.get(MenuProvider)
-            menubar = self.menuBar()
-            for provider in providers:
-                try:
-                    menu_name = provider.get_menu_name()
-                    actions = provider.get_actions()
-                    target_menu = None
-                    for act in menubar.actions():
-                        if act.text().replace("&", "") == menu_name:
-                            target_menu = act.menu()
-                            break
-                    if target_menu is None:
-                        target_menu = menubar.addMenu(menu_name)
-                    for action in actions:
-                        target_menu.addAction(action)
-                except Exception as e:
-                    logger.error(f"❌ MenuProvider falló: {e}")
-        except Exception as e:
-            logger.debug(f"⚠️ Error menu providers: {e}")
-
+        # Status bar
         try:
             from core.extensions.interfaces import StatusWidget
             providers = registry.get(StatusWidget)
@@ -312,10 +280,73 @@ class MainWindow(QMainWindow):
                         self.status_bar.addPermanentWidget(widget)
                 except Exception as e:
                     logger.error(f"❌ StatusWidget falló: {e}")
-        except Exception as e:
-            logger.debug(f"⚠️ Error status widgets: {e}")
+        except Exception:
+            pass
 
         logger.info("✅ Extensiones de UI aplicadas")
+
+    def _apply_toolbar_extensions(self, toolbar):
+        """Inyecta botones de plugins en la toolbar (slots left/right)."""
+        try:
+            from core.extension_registry import get_extension_registry
+            from core.extensions.interfaces import UIExtension
+
+            registry = get_extension_registry()
+            if registry is None:
+                return
+
+            # Botones "left" (antes del spacer)
+            left_exts = [
+                ext for ext in registry.get(UIExtension)
+                if ext.get_target() == "main_toolbar" and ext.get_slot() == "left"
+            ]
+            left_exts = sorted(
+                left_exts,
+                key=lambda e: e.get_priority() if hasattr(e, "get_priority") else 50,
+            )
+
+            for ext in left_exts:
+                try:
+                    widgets = ext.get_widgets({"main_window": self}) or []
+                    for w in widgets:
+                        if w is None:
+                            continue
+                        if w.parent() is None:
+                            toolbar.addWidget(w)
+                        w.setProperty("_is_plugin_widget", True)
+                    if widgets:
+                        toolbar.addSeparator()
+                except Exception as e:
+                    logger.error(
+                        f"❌ UIExtension toolbar '{ext.get_id()}' falló: {e}",
+                        exc_info=True,
+                    )
+
+            # Botones "right" (al final)
+            right_exts = [
+                ext for ext in registry.get(UIExtension)
+                if ext.get_target() == "main_toolbar" and ext.get_slot() == "right"
+            ]
+            right_exts = sorted(
+                right_exts,
+                key=lambda e: e.get_priority() if hasattr(e, "get_priority") else 50,
+            )
+            for ext in right_exts:
+                try:
+                    widgets = ext.get_widgets({"main_window": self}) or []
+                    for w in widgets:
+                        if w is None:
+                            continue
+                        if w.parent() is None:
+                            toolbar.addWidget(w)
+                        w.setProperty("_is_plugin_widget", True)
+                except Exception as e:
+                    logger.error(
+                        f"❌ UIExtension toolbar '{ext.get_id()}' falló: {e}",
+                        exc_info=True,
+                    )
+        except Exception as e:
+            logger.debug(f"⚠️ Error aplicando toolbar: {e}")
 
     def _create_toolbar(self):
         toolbar = QToolBar("Principal")
@@ -339,8 +370,8 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self.record_all_btn)
         toolbar.addSeparator()
 
-        # ✅ NUEVO: Aquí se insertan los botones de plugins
-        self._apply_toolbar_contributions(toolbar)
+        # ✅ Slot "left" — plugins inyectan aquí (ej. audio: 🎤 Mic PC)
+        self._apply_toolbar_slot(toolbar, "left")
 
         settings_btn = QPushButton("⚙️ Configurar")
         settings_btn.clicked.connect(self._show_settings)
@@ -369,45 +400,35 @@ class MainWindow(QMainWindow):
         self.system_monitor_widget = SystemMonitorWidget()
         toolbar.addWidget(self.system_monitor_widget)
 
-    def _apply_toolbar_contributions(self, toolbar):
-        """
-        Añade botones de plugins a la toolbar.
+        # ✅ Slot "right" — plugins inyectan al final
+        self._apply_toolbar_slot(toolbar, "right")
 
-        Los plugins registrados como ToolbarContribution son consultados
-        y sus botones se añaden aquí.
-        """
+    def _apply_toolbar_slot(self, toolbar, slot: str):
+        """Inyecta UIExtension en un slot específico de la toolbar."""
         try:
             from core.extension_registry import get_extension_registry
-            from core.extensions.interfaces import ToolbarContribution
-
+            from core.extensions.interfaces import UIExtension
             registry = get_extension_registry()
             if registry is None:
                 return
-
-            contributions = registry.get(ToolbarContribution)
-            if not contributions:
-                return
-
-            contributions = sorted(
-                contributions,
-                key=lambda c: c.get_priority() if hasattr(c, 'get_priority') else 50,
+            exts = [
+                e for e in registry.get(UIExtension)
+                if e.get_target() == "main_toolbar" and e.get_slot() == slot
+            ]
+            exts = sorted(
+                exts,
+                key=lambda e: e.get_priority() if hasattr(e, "get_priority") else 50,
             )
-
-            for contrib in contributions:
+            for ext in exts:
                 try:
-                    buttons = contrib.get_buttons(self)
-                    if not buttons:
-                        continue
-                    for btn in buttons:
-                        if btn is not None and btn.parent() is None:
-                            toolbar.addWidget(btn)
-                    toolbar.addSeparator()
+                    for w in ext.get_widgets({"main_window": self}) or []:
+                        if w is not None and w.parent() is None:
+                            toolbar.addWidget(w)
+                            w.setProperty("_is_plugin_widget", True)
                 except Exception as e:
-                    logger.error(
-                        f"❌ ToolbarContribution falló: {e}", exc_info=True
-                    )
+                    logger.error(f"❌ UIExtension '{ext.get_id()}' falló: {e}")
         except Exception as e:
-            logger.debug(f"⚠️ Error aplicando toolbar: {e}")
+            logger.debug(f"⚠️ Error aplicando toolbar slot {slot}: {e}")
 
     def _get_toolbar_btn_style(self, bg, hover):
         return f"""
@@ -481,6 +502,12 @@ class MainWindow(QMainWindow):
 
         widget = self.camera_grid.add_camera_widget(camera)
 
+        try:
+            widget.flash_toggled.connect(self._on_flash_toggle)
+            widget.auto_flash_toggled.connect(self._on_auto_flash_toggled)
+        except Exception:
+            pass
+
         if self.camera_manager.add_camera(camera):
             thread = self.camera_manager.get_thread(camera.id)
             if thread:
@@ -520,65 +547,65 @@ class MainWindow(QMainWindow):
 
     def _configure_camera_detections(self, camera: CameraDevice, thread):
         """
-        FASE 3: NO crear detectores legacy.
-        Los analyzers del registry manejan las detecciones.
-        Solo se mantiene el setup legacy si no hay analyzers.
+        FASE 3: los analyzers se cargan lazy desde el engine.
+        El Core NO configura detectores legacy.
+        Solo se configura escaneo legacy si el plugin document_scanner
+        no está activo (fallback).
 
-        Este método existe por compatibilidad y para el fallback legacy
-        cuando los plugins están desactivados.
+        Los flags motion_enabled/face_enabled viven en QSettings y los
+        leen los analyzers directamente desde settings_manager.
         """
         try:
             # Verificar si hay analyzers disponibles
             from core.extension_registry import get_extension_registry
             from core.extensions.interfaces import FrameAnalyzer
             registry = get_extension_registry()
-            has_analyzers = registry is not None and len(registry.get(FrameAnalyzer)) > 0
+            has_analyzers = (
+                registry is not None
+                and len(registry.get(FrameAnalyzer)) > 0
+            )
 
             if has_analyzers:
                 logger.debug(
-                    f"🎯 {camera.name}: usando FrameAnalyzers del registry, "
-                    f"omitido setup legacy"
+                    f"🎯 {camera.name}: usando FrameAnalyzers del registry"
                 )
+                # Forzar recarga de analyzers en el thread
+                if hasattr(thread, "refresh_analyzers"):
+                    thread.refresh_analyzers()
                 return
 
-            # Fallback legacy
+            # Fallback legacy (solo si NO hay plugins de detección activos)
             logger.debug(f"ℹ️ {camera.name}: sin analyzers, activando legacy")
-
-            scan_settings = self.settings.get_scan_settings()
-            if scan_settings.get("enabled") and hasattr(thread, 'setup_document_scanning'):
-                thread.setup_document_scanning(
-                    enabled=True,
-                    tesseract_path=scan_settings.get("tesseract_path"),
-                    auto_correct=scan_settings.get("auto_correct", True)
-                )
-
             det_settings = self.settings.get_detection_settings()
             if det_settings.get("motion_enabled") or det_settings.get("face_enabled"):
-                if hasattr(thread, 'setup_detection'):
+                if hasattr(thread, "setup_detection"):
                     thread.setup_detection(
                         motion_enabled=det_settings.get("motion_enabled", False),
                         face_enabled=det_settings.get("face_enabled", False),
                         motion_sensitivity=det_settings.get("motion_sensitivity", 25),
                         motion_min_area=det_settings.get("motion_min_area", 500),
-                        face_tolerance=det_settings.get("face_tolerance", 0.6)
+                        face_tolerance=det_settings.get("face_tolerance", 0.6),
                     )
         except Exception as e:
             logger.error(f"Error configurando detecciones: {e}", exc_info=True)
 
-    def on_plugin_state_changed(self, plugin_name: str, enabled: bool):
-        """Callback cuando cambia el estado de un plugin."""
-        logger.info(f"🔄 Plugin '{plugin_name}' {'activado' if enabled else 'desactivado'}")
+    def _rebuild_toolbar_extensions(self):
+        """Limpia y re-aplica los botones de plugins en la toolbar."""
+        toolbar = self.main_toolbar
+        if toolbar is None:
+            return
 
-        # Reconstruir widgets de cámaras
-        if plugin_name in ("audio", "motion_detector"):
-            for widget in self.camera_grid.get_camera_widgets():
-                # Recargar extensiones
-                if hasattr(widget, 'refresh_extension_widgets'):
-                    widget.refresh_extension_widgets()
+        # Quitar botones de plugin previos
+        for action in list(toolbar.actions()):
+            w = toolbar.widgetForAction(action)
+            if w is not None and w.property("_is_plugin_widget"):
+                toolbar.removeAction(action)
+                w.setParent(None)
+                w.deleteLater()
 
-        # Recargar toolbar
-        if plugin_name == "audio":
-            self._rebuild_toolbar()
+        # Re-aplicar
+        self._apply_toolbar_slot(toolbar, "left")
+        self._apply_toolbar_slot(toolbar, "right")
 
     # ==================== DETECCIONES ====================
 
@@ -653,25 +680,31 @@ class MainWindow(QMainWindow):
 
     def _auto_flash_on_motion(self, camera_id: int):
         thread = self.camera_manager.get_thread(camera_id)
-        if not thread or not hasattr(thread, 'toggle_flash'):
+        if not thread or not hasattr(thread, "toggle_flash"):
             return
         thread.toggle_flash(True)
         widget = self.camera_grid.get_camera_widget(camera_id)
-        if widget and hasattr(widget, 'set_flash_state'):
-            widget.set_flash_state(True)
+        if widget and hasattr(widget, "_plugin_flash"):
+            try:
+                widget._plugin_flash["set_flash_state"](True)
+            except Exception:
+                pass
         flash_on_ms = advanced_config.get("flash_on_duration_ms", 2000)
         self._schedule_once(
             flash_on_ms + 1000,
-            lambda: self._auto_flash_off(camera_id)
+            lambda: self._auto_flash_off(camera_id),
         )
 
     def _auto_flash_off(self, camera_id: int):
         thread = self.camera_manager.get_thread(camera_id)
-        if thread and hasattr(thread, 'toggle_flash'):
+        if thread and hasattr(thread, "toggle_flash"):
             thread.toggle_flash(False)
         widget = self.camera_grid.get_camera_widget(camera_id)
-        if widget and hasattr(widget, 'set_flash_state'):
-            widget.set_flash_state(False)
+        if widget and hasattr(widget, "_plugin_flash"):
+            try:
+                widget._plugin_flash["set_flash_state"](False)
+            except Exception:
+                pass
 
     def _show_auto_record_dialog(self, camera_id: int, timeout: int):
         try:
@@ -837,8 +870,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", f"{camera.name} no conectada")
             return
 
+        # ✅ Auto-flash: consultar el plugin camera_controls via widget
         widget = self.camera_grid.get_camera_widget(camera_id)
-        auto_flash = widget.is_auto_flash_enabled() if widget else False
+        auto_flash = False
+        if widget and hasattr(widget, "_plugin_flash"):
+            try:
+                auto_flash = widget._plugin_flash["is_auto_flash_enabled"]()
+            except Exception:
+                auto_flash = False
 
         if auto_flash:
             self._capture_with_auto_flash(camera_id, thread, camera)
@@ -1259,10 +1298,19 @@ class MainWindow(QMainWindow):
         logger.info("🔄 Recargando FrameAnalyzers...")
         for camera_id, thread in list(self.camera_threads.items()):
             try:
-                if hasattr(thread, 'refresh_analyzers'):
+                if hasattr(thread, "refresh_analyzers"):
                     thread.refresh_analyzers()
             except Exception as e:
                 logger.debug(f"Error refresh analyzers {camera_id}: {e}")
+
+        # Cámaras locales
+        for camera_id in list(self.camera_manager.local_camera_ids):
+            thread = self.camera_manager.local_manager.get_thread(camera_id)
+            if thread and hasattr(thread, "refresh_analyzers"):
+                try:
+                    thread.refresh_analyzers()
+                except Exception:
+                    pass
 
     def on_plugin_state_changed(self, plugin_name: str, enabled: bool):
         """Callback para cuando un plugin cambia de estado."""

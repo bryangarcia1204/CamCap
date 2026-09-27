@@ -1,6 +1,4 @@
-"""
-Widget "✨ Mejorar Imagen" para ImagePreviewDialog.
-"""
+"""Botón '✨ Mejorar Imagen' inyectable en ImagePreviewDialog."""
 from PySide6.QtWidgets import QPushButton, QDialog, QMessageBox
 
 from utils.logger import get_logger
@@ -8,17 +6,32 @@ from utils.logger import get_logger
 logger = get_logger("Plugin.ImageEnhancerWidgets")
 
 
-def create_enhance_button(dialog, image=None, **kwargs):
-    """
-    Crea el botón "✨ Mejorar Imagen".
+class ImageEnhancerUIExtension:
+    """UIExtension que inyecta el botón 'Mejorar' en ImagePreviewDialog."""
 
-    Args:
-        dialog: instancia de ImagePreviewDialog
-        image: imagen numpy opcional (si no se pasa, se toma de dialog.image)
+    def get_id(self) -> str:
+        return "image_enhancer.image_preview.info_bar"
 
-    Returns:
-        Lista con [enhance_btn]
-    """
+    def get_target(self) -> str:
+        return "image_preview"
+
+    def get_slot(self) -> str:
+        return "info_bar"
+
+    def get_priority(self) -> int:
+        return 100
+
+    def get_widgets(self, context: dict):
+        dialog = context.get("dialog")
+        image = context.get("image")
+        if dialog is None:
+            return []
+
+        return [create_enhance_button(dialog, image=image)]
+
+
+def create_enhance_button(dialog, image=None):
+    """Crea el botón '✨ Mejorar Imagen'."""
     btn = QPushButton("✨ Mejorar Imagen")
     btn.setFixedHeight(32)
     btn.setStyleSheet("""
@@ -42,7 +55,7 @@ def create_enhance_button(dialog, image=None, **kwargs):
         try:
             from .enhance_dialog import ImageEnhanceDialog
 
-            img = image if image is not None else getattr(dialog, 'image', None)
+            img = image if image is not None else getattr(dialog, "image", None)
             if img is None:
                 QMessageBox.warning(dialog, "Error", "No hay imagen")
                 return
@@ -52,13 +65,11 @@ def create_enhance_button(dialog, image=None, **kwargs):
                 dialog.image, was_enhanced = enhancer_dialog.get_result()
                 dialog._enhanced = was_enhanced
 
-                # Actualizar preview
-                if hasattr(dialog, '_display_image'):
+                if hasattr(dialog, "_display_image"):
                     dialog._display_image()
 
-                # Actualizar info label
                 h, w = dialog.image.shape[:2]
-                if hasattr(dialog, 'info_label'):
+                if hasattr(dialog, "info_label"):
                     dialog.info_label.setText(f"📐 {w}x{h} px  |  ✨ Mejorada")
 
                 logger.info("Imagen mejorada desde plugin")
@@ -67,4 +78,4 @@ def create_enhance_button(dialog, image=None, **kwargs):
             QMessageBox.critical(dialog, "Error", f"Error: {e}")
 
     btn.clicked.connect(_open_enhancer)
-    return [btn]
+    return btn

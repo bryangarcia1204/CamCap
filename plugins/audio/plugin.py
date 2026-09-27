@@ -38,87 +38,28 @@ class AudioPlugin(BasePlugin):
 
     def on_enable(self) -> bool:
         try:
-            # 1. Provider
-            from core.extensions.interfaces import AudioManagerProvider
+            from core.extensions.interfaces import UIExtension
+            from .widgets import AudioUIExtension
+
             self.register_extension(
-                AudioManagerProvider,
-                self,
-                priority=50,
-            )
-
-            # ✅ NUEVO: Registrar CameraWidgetExtension
-            from core.extensions.interfaces import CameraWidgetExtension
-            self.register_extension(
-                CameraWidgetExtension,
-                self,
-                priority=110,   # orden: flash (100), audio (110), auto_flash (120)
-            )
-
-            # ✅ NUEVO: Registrar ToolbarContribution
-            from core.extensions.interfaces import ToolbarContribution
-            self.register_extension(
-                ToolbarContribution,
-                self,
-                priority=100,
-            )
-
-            # 2. ConfigTab
-            from core.extensions.interfaces import ConfigTab
-            from core.extensions.config_tab_provider import PluginConfigTabProvider
-            from plugins.audio.config_tab import AudioConfigTab
-
-            self._tab_provider = PluginConfigTabProvider(
-                plugin_name=self.NAME,
-                plugin_context=self.context,
-                tab_class=AudioConfigTab,
-                tab_id="plugin_audio",
-                title="Audio",
-                icon="🎵",
+                UIExtension,
+                AudioUIExtension("camera_widget", "header", priority=110),
             )
             self.register_extension(
-                ConfigTab,
-                self._tab_provider,
-                priority=140,
+                UIExtension,
+                AudioUIExtension("camera_widget", "footer", priority=110),
             )
-
-            logger.info("✅ AudioPlugin activado (provider + ConfigTab)")
+            self.register_extension(
+                UIExtension,
+                AudioUIExtension("main_toolbar", "left", priority=100),
+            )
+            self.logger.info("✅ AudioPlugin activado (audio UI + toolbar)")
             return True
         except Exception as e:
-            logger.error(f"❌ Error activando: {e}", exc_info=True)
+            self.logger.error(f"❌ Error activando: {e}", exc_info=True)
             return False
 
     def on_disable(self):
-        # Desregistrar extensiones
-        from core.extension_registry import get_extension_registry
-        from core.extensions.interfaces import (
-            CameraWidgetExtension, ToolbarContribution, ConfigTab,
-        )
-        registry = get_extension_registry()
-
-        try:
-            registry.unregister(CameraWidgetExtension, self)
-        except Exception:
-            pass
-        try:
-            registry.unregister(ToolbarContribution, self)
-        except Exception:
-            pass
-
-        if self._tab_provider is not None:
-            try:
-                from core.extension_registry import get_extension_registry
-                from core.extensions.interfaces import ConfigTab
-                registry = get_extension_registry()
-                registry.unregister(ConfigTab, self._tab_provider)
-                self._tab_provider.cleanup()
-                self._tab_provider = None
-                logger.debug("🗑️ ConfigTab de audio desregistrada")
-            except Exception as e:
-                logger.error(f"Error desregistrando ConfigTab: {e}", exc_info=True)
-
-        logger.info("⏸️ AudioPlugin desactivado")
-
-        # ✅ NUEVO: limpiar timers de audio de todos los widgets
         try:
             from utils.timer_manager import timer_manager
             for name in list(timer_manager.list_timers()):
@@ -126,8 +67,7 @@ class AudioPlugin(BasePlugin):
                     timer_manager.stop(name)
         except Exception:
             pass
-
-        logger.info("⏸️ AudioPlugin desactivado")
+        self.logger.info("⏸️ AudioPlugin desactivado")
 
     def on_unload(self):
         try:

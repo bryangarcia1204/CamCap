@@ -1,13 +1,18 @@
 """
-Widget de cámara individual - v4
-- Botón mute independiente
-- Pregunta al grabar sin audio
-- Logs DEBUG integrados
+Widget de cámara individual - v5 (post-refactor plugins)
+
+Cambios v5:
+- SIN botones de plugins hardcodeados (audio, flash, etc.)
+- Usa UIExtension genérica vía _apply_slot()
+- El flash se movió al plugin camera_controls
+- El audio se movió al plugin audio
 """
-from PySide6.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel,
-                               QPushButton, QFrame, QSizePolicy, QMessageBox, QWidget)
+from PySide6.QtWidgets import (
+    QVBoxLayout, QHBoxLayout, QLabel,
+    QPushButton, QFrame, QSizePolicy, QWidget,
+)
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QSize
-from PySide6.QtGui import QPixmap, QImage, QMouseEvent
+from PySide6.QtGui import QImage, QMouseEvent
 
 from core.models import CameraDevice, CameraStatus
 from utils.timer_manager import timer_manager
@@ -18,17 +23,18 @@ logger = get_logger("CameraWidget")
 
 
 class CameraWidget(QFrame):
-    """Widget que muestra el feed de una cámara"""
+    """Widget que muestra el feed de una cámara."""
 
     capture_requested = Signal(int)
     recording_toggled = Signal(int, bool)
     camera_removed = Signal(int)
     toggle_expand_requested = Signal(int)
-    flash_toggled = Signal(int, bool)
-    auto_flash_toggled = Signal(int, bool)
     expand_finished = Signal()
     selection_changed = Signal(int, bool)
-    audio_state_changed = Signal(int, bool)   # ✅ NUEVO: (camera_id, muted)
+
+    # Señales legacy (por si algún plugin las usa)
+    flash_toggled = Signal(int, bool)
+    auto_flash_toggled = Signal(int, bool)
 
     def __init__(self, camera: CameraDevice, parent=None):
         super().__init__(parent)
@@ -38,14 +44,13 @@ class CameraWidget(QFrame):
         from utils.config_loader import advanced_config
         cfg = advanced_config.get_all()
 
-        # Tamaños
         self.setMinimumSize(
             cfg.get("camera_widget_min_width", 320),
-            cfg.get("camera_widget_min_height", 280)
+            cfg.get("camera_widget_min_height", 280),
         )
         self.setMaximumSize(
             cfg.get("camera_widget_max_width", 480),
-            cfg.get("camera_widget_max_height", 400)
+            cfg.get("camera_widget_max_height", 400),
         )
 
         self._fps_check_interval = cfg.get("camera_fps_check_interval", 1000)
@@ -55,27 +60,20 @@ class CameraWidget(QFrame):
         self.is_paused = False
         self.is_expanded = False
         self._is_selected = False
-        self.flash_active = False
-        self.auto_flash_enabled = camera.auto_flash
 
-        # Estado de frames
         self._fps_counter = 0
         self._last_frame = None
         self._paused_frame = None
         self._pending_frame = None
         self._last_display_time = 0
         self._min_display_interval = int(1000 / cfg.get("camera_display_fps", 30))
-        self._run_update_audio_level = False
 
-        # Pool + control del timer display
         self._pixmap_pool = ScaledPixmapPool(size=cfg.get("pixmap_pool_size", 3))
         self._display_timer_running = False
         self._empty_cycles = 0
 
-        # Grabación
         self.recording_time = 0
 
-        # Animación de expansión
         self.expand_animation = QPropertyAnimation(self, b"geometry")
         self.expand_animation.setDuration(cfg.get("anim_duration_ms", 350))
         self.expand_animation.setEasingCurve(QEasingCurve.InOutQuad)
@@ -84,41 +82,31 @@ class CameraWidget(QFrame):
         self._target_geometry = None
         self._original_geometry = None
 
-        # Nombres de timers
         self._owner = f"camera_{camera.id}"
-        self.audio_level_timer_name = f"{self._owner}.audio_level"
         self._fps_timer_group_name = "fps"
 
-        # 🔍 DEBUG: Estado inicial
-        logger.debug(
-            f"🔧 [init] CameraWidget: name={camera.name}, id={camera.id}, "
-            f"min={cfg.get('camera_widget_min_width', 320)}x"
-            f"{cfg.get('camera_widget_min_height', 280)}, "
-            f"max={cfg.get('camera_widget_max_width', 480)}x"
-            f"{cfg.get('camera_widget_max_height', 400)}, "
-            f"fps_display={cfg.get('camera_display_fps', 30)}, "
-            f"pixmap_pool={cfg.get('pixmap_pool_size', 3)}"
-        )
+        # Guardamos referencias a los layouts para inyección de extensiones
+        self._header_layout_ref: QHBoxLayout = None
+        self._footer_layout_ref: QVBoxLayout = None
 
         self._setup_ui()
         self._apply_status_style(CameraStatus.DISCONNECTED)
         self._update_selection_style()
 
-        # Solo FPS timer al inicio
+        # Timer de FPS
         self._tm.create_group(self._owner, [
             (self._fps_timer_group_name, self._fps_check_interval, self._update_fps, False),
         ])
 
-        # ✅ FIX: crear el timer display SIN arrancarlo
+        # Timer display (creado pero no arrancado)
         self._tm.create(
             f"{self._owner}.display",
             33,
             self._process_pending_frame,
-            start=False
+            start=False,
         )
-        logger.debug(
-            f"🔧 [init] {self.camera.name}: timer display creado (inactivo, 33ms)"
-        )
+
+    # ==================== UI ====================
 
     def _setup_ui(self):
         self.setObjectName("CameraWidget")
@@ -132,8 +120,9 @@ class CameraWidget(QFrame):
         layout.setSpacing(8)
         layout.setContentsMargins(12, 12, 12, 12)
 
-        # Header
+        # === Header ===
         header_layout = QHBoxLayout()
+        self._header_layout_ref = header_layout
 
         self.name_label = QLabel(self.camera.name)
         self.name_label.setObjectName("cameraName")
@@ -148,9 +137,12 @@ class CameraWidget(QFrame):
         )
         header_layout.addWidget(self.selection_indicator)
 
-        # Los plugins añaden sus botones aquí (flash, audio, etc.)
-        self._header_layout_ref = header_layout
-        self._apply_extension_widgets(header_layout)
+        # ✅ Slot "header" — los plugins inyectan aquí
+        self._apply_slot("camera_widget", "header", {
+            "camera_id": self.camera.id,
+            "camera": self.camera,
+            "widget": self,
+        })
 
         self.status_label = QLabel("● Desconectado")
         self.status_label.setObjectName("cameraStatus")
@@ -174,7 +166,7 @@ class CameraWidget(QFrame):
 
         layout.addLayout(header_layout)
 
-        # Área de video
+        # === Área de video ===
         self.video_frame = QFrame()
         self.video_frame.setStyleSheet("""
             QFrame {
@@ -206,7 +198,7 @@ class CameraWidget(QFrame):
 
         layout.addWidget(self.video_frame)
 
-        # Info
+        # === Info ===
         info_layout = QHBoxLayout()
 
         if self.camera.is_screen:
@@ -231,7 +223,22 @@ class CameraWidget(QFrame):
 
         layout.addLayout(info_layout)
 
-        # Controles
+        # === Footer (VU meter grande, etc.) ===
+        footer_layout = QVBoxLayout()
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(2)
+        self._footer_layout_ref = footer_layout
+
+        # ✅ Slot "footer" — los plugins inyectan aquí
+        self._apply_slot("camera_widget", "footer", {
+            "camera_id": self.camera.id,
+            "camera": self.camera,
+            "widget": self,
+        })
+
+        layout.addLayout(footer_layout)
+
+        # === Controles ===
         controls_layout = QHBoxLayout()
         controls_layout.setSpacing(10)
 
@@ -250,6 +257,86 @@ class CameraWidget(QFrame):
         layout.addLayout(controls_layout)
 
         self._apply_base_style()
+
+    # ==================== EXTENSIONES ====================
+
+    def _apply_slot(self, target: str, slot: str, context: dict):
+        """Aplica UIExtension para un (target, slot) al layout correspondiente."""
+        try:
+            from core.extension_registry import get_extension_registry
+            from core.extensions.interfaces import UIExtension
+
+            registry = get_extension_registry()
+            if registry is None:
+                return
+
+            extensions = [
+                ext for ext in registry.get(UIExtension)
+                if ext.get_target() == target and ext.get_slot() == slot
+            ]
+
+            if not extensions:
+                return
+
+            extensions = sorted(
+                extensions,
+                key=lambda e: e.get_priority() if hasattr(e, "get_priority") else 50,
+            )
+
+            # Elegir el layout correcto
+            if slot == "header":
+                layout = self._header_layout_ref
+            elif slot == "footer":
+                layout = self._footer_layout_ref
+            else:
+                layout = None
+
+            if layout is None:
+                return
+
+            for ext in extensions:
+                try:
+                    widgets = ext.get_widgets(context) or []
+                    for w in widgets:
+                        if w is None:
+                            continue
+                        if w.parent() is None:
+                            layout.addWidget(w)
+                        w.setProperty("_is_plugin_widget", True)
+                except Exception as e:
+                    logger.error(
+                        f"❌ UIExtension '{ext.get_id()}' falló: {e}",
+                        exc_info=True,
+                    )
+        except Exception as e:
+            logger.debug(f"⚠️ Error aplicando slot {target}.{slot}: {e}")
+
+    def refresh_extensions(self):
+        """Limpia y re-aplica las extensiones de UI."""
+        for layout in (self._header_layout_ref, self._footer_layout_ref):
+            if layout is None:
+                continue
+            for i in reversed(range(layout.count())):
+                item = layout.itemAt(i)
+                if item is None:
+                    continue
+                w = item.widget()
+                if w is not None and w.property("_is_plugin_widget"):
+                    w.setParent(None)
+                    w.deleteLater()
+
+        self._apply_slot("camera_widget", "header", {
+            "camera_id": self.camera.id,
+            "camera": self.camera,
+            "widget": self,
+        })
+        self._apply_slot("camera_widget", "footer", {
+            "camera_id": self.camera.id,
+            "camera": self.camera,
+            "widget": self,
+        })
+
+    # ==================== ESTILOS ====================
 
     def _get_icon_button_style(self):
         return """
@@ -347,14 +434,14 @@ class CameraWidget(QFrame):
             CameraStatus.CONNECTING: "#FF9800",
             CameraStatus.CONNECTED: "#4CAF50",
             CameraStatus.ERROR: "#f44336",
-            CameraStatus.RECORDING: "#FF9800"
+            CameraStatus.RECORDING: "#FF9800",
         }
         hover_bg = {
             CameraStatus.DISCONNECTED: "#e0e0e0",
             CameraStatus.CONNECTING: "#fff3e0",
             CameraStatus.CONNECTED: "#e8f5e9",
             CameraStatus.ERROR: "#ffebee",
-            CameraStatus.RECORDING: "#fff3e0"
+            CameraStatus.RECORDING: "#fff3e0",
         }.get(status, "#e0e0e0")
         color = border_colors.get(status, "#404040")
 
@@ -433,115 +520,6 @@ class CameraWidget(QFrame):
             }}
         """)
 
-    def _create_ip_buttons(self, header_layout):
-        """
-        FASE 6: Los botones de plugins se inyectan vía CameraWidgetExtension.
-
-        El Core SOLO crea los botones esenciales (pausa, eliminar).
-        Los plugins añaden sus botones (flash, audio, etc.) dinámicamente.
-        """
-        # Los botones base ya se añaden antes en _setup_ui
-        # Aquí solo insertamos los plugins
-        pass
-
-    def _apply_extension_widgets(self, header_layout):
-        """
-        Consulta al ExtensionRegistry y añade widgets de plugins al header.
-
-        Se llama durante _setup_ui() y también cuando un plugin se activa/desactiva.
-        """
-        try:
-            from core.extension_registry import get_extension_registry
-            from core.extensions.interfaces import CameraWidgetExtension
-
-            registry = get_extension_registry()
-            if registry is None:
-                return
-
-            extensions = registry.get(CameraWidgetExtension)
-            if not extensions:
-                return
-
-            # Ordenar por prioridad
-            extensions = sorted(
-                extensions,
-                key=lambda e: e.get_priority() if hasattr(e, 'get_priority') else 50,
-            )
-
-            for ext in extensions:
-                try:
-                    widgets = ext.get_widgets(self.camera.id, self)
-                    if not widgets:
-                        continue
-                    for w in widgets:
-                        if w is not None and w.parent() is None:
-                            header_layout.addWidget(w)
-                except Exception as e:
-                    logger.error(
-                        f"❌ CameraWidgetExtension falló: {e}",
-                        exc_info=True,
-                    )
-        except Exception as e:
-            logger.debug(f"⚠️ Error aplicando extensiones: {e}")
-
-    def refresh_extension_widgets(self):
-        """
-        Re-aplica los widgets de extensión.
-
-        Llamar cuando un plugin se activa/desactiva en runtime.
-        """
-        # Localizar el header_layout original
-        # Es el primer QHBoxLayout del widget
-        # (más simple: buscar el layout y limpiar widgets de extensiones)
-        # Por simplicidad, recreamos el header
-        # (en producción, guardar referencia al header_layout en __init__)
-        pass
-
-    # ==================== FLASH ====================
-
-    def _toggle_flash(self):
-        if self.camera.is_screen or self.camera.is_local:
-            return
-        self.flash_active = not self.flash_active
-        if self.flash_active:
-            self.flash_btn.setProperty("type", "flash-on")
-            self.flash_btn.setToolTip("Flash encendido")
-        else:
-            self.flash_btn.setProperty("type", "")
-            self.flash_btn.setToolTip("Flash apagado")
-        self.flash_btn.style().unpolish(self.flash_btn)
-        self.flash_btn.style().polish(self.flash_btn)
-        logger.debug(
-            f"🔦 [flash] {self.camera.name}: {'ON' if self.flash_active else 'OFF'}"
-        )
-        self.flash_toggled.emit(self.camera.id, self.flash_active)
-
-    def _toggle_auto_flash(self, checked: bool):
-        self.auto_flash_enabled = checked
-        self.camera.auto_flash = checked
-        logger.debug(
-            f"⚡ [auto_flash] {self.camera.name}: {'ON' if checked else 'OFF'}"
-        )
-        self.auto_flash_toggled.emit(self.camera.id, checked)
-
-    def is_auto_flash_enabled(self) -> bool:
-        return (
-            self.auto_flash_enabled
-            and not self.camera.is_screen
-            and not self.camera.is_local
-        )
-
-    def set_flash_state(self, enabled: bool):
-        if self.camera.is_screen or self.camera.is_local:
-            return
-        self.flash_active = enabled
-        if enabled:
-            self.flash_btn.setProperty("type", "flash-on")
-        else:
-            self.flash_btn.setProperty("type", "")
-        self.flash_btn.style().unpolish(self.flash_btn)
-        self.flash_btn.style().polish(self.flash_btn)
-
     # ==================== EVENTOS ====================
 
     def _on_mouse_press(self, event: QMouseEvent):
@@ -592,82 +570,12 @@ class CameraWidget(QFrame):
         else:
             self._apply_base_style()
 
-    def _apply_video_overlays(self, force: bool = False):
-        """
-        Aplica los VideoOverlay registrados al video_frame.
-        Solo se aplica cuando cambian o con force=True.
-        """
-        try:
-            from core.extension_registry import get_extension_registry
-            from core.extensions.interfaces import VideoOverlay
-
-            registry = get_extension_registry()
-            overlays = registry.get(VideoOverlay)
-
-            if not overlays:
-                return
-
-            # ✅ Cache: si ya aplicamos los overlays, no repetir
-            overlay_ids = tuple(id(o) for o in overlays)
-            if not force and getattr(self, '_applied_overlay_ids', None) == overlay_ids:
-                # Solo reposicionar si cambió el tamaño
-                for widget in self.video_frame.findChildren(QWidget):
-                    if hasattr(widget, '_is_video_overlay'):
-                        self._position_overlay(widget)
-                return
-
-            # Ordenar por prioridad (mayor = más arriba)
-            overlays = sorted(
-                overlays,
-                key=lambda o: o.get_priority() if hasattr(o, 'get_priority') else 50,
-                reverse=True,
-            )
-
-            for overlay in overlays:
-                try:
-                    if not overlay.should_show(self.camera.id):
-                        continue
-
-                    widget = overlay.get_overlay_widget(self.camera.id)
-                    if widget is None:
-                        continue
-
-                    # Reparentar al video_frame
-                    if widget.parent() is not self.video_frame:
-                        widget.setParent(self.video_frame)
-                        widget.raise_()
-
-                    widget._is_video_overlay = True
-                    # Posicionar arriba-derecha
-                    self._position_overlay(widget)
-                except Exception as e:
-                    logger.debug(f"Error aplicando VideoOverlay: {e}")
-        except Exception:
-            pass
-
-    def _position_overlay(self, widget):
-        """Posiciona un overlay en la esquina superior derecha."""
-        try:
-            frame_w = self.video_frame.width()
-            widget.adjustSize()
-            widget.move(
-                max(4, frame_w - widget.width() - 4),
-                4,
-            )
-        except Exception:
-            pass
-
     # ==================== EXPANSIÓN ====================
 
     def toggle_expand(self, expanded: bool, target_geometry: QRect = None):
         if self._animating:
             self.expand_animation.stop()
             self._animating = False
-
-        logger.debug(
-            f"🔍 [expand] {self.camera.name}: expanded={expanded}, "
-            f"target={target_geometry}"
-        )
 
         self.is_expanded = expanded
         self._target_geometry = target_geometry
@@ -682,7 +590,7 @@ class CameraWidget(QFrame):
                 parent_width = self.parent().width() if self.parent() else 800
                 target_geometry = QRect(
                     current_geo.x(), current_geo.y(),
-                    parent_width - 20, 600
+                    parent_width - 20, 600,
                 )
             if target_geometry.width() < 640:
                 target_geometry.setWidth(640)
@@ -721,10 +629,6 @@ class CameraWidget(QFrame):
     def _toggle_pause(self):
         self.is_paused = not self.is_paused
 
-        logger.debug(
-            f"⏸️ [pause] {self.camera.name}: paused={self.is_paused}"
-        )
-
         if self.is_paused:
             self._paused_frame = self._last_frame
             self.pause_btn.setText("▶")
@@ -747,29 +651,21 @@ class CameraWidget(QFrame):
     # ==================== FRAMES ====================
 
     def update_frame(self, qimage: QImage):
-        """Actualiza con throttling - usa start/stop en lugar de create"""
         if self.is_paused:
             return
-
         if qimage is None or qimage.isNull():
-            logger.debug(f"⚠️ [widget] {self.camera.name}: qimage nulo")
             return
 
         self._pending_frame = qimage
         self._last_frame = qimage
         self._fps_counter += 1
 
-        # ✅ Activar timer solo si no está corriendo
         if not self._display_timer_running:
             self._tm.start(f"{self._owner}.display")
             self._display_timer_running = True
             self._empty_cycles = 0
-            logger.debug(
-                f"▶️ [widget] {self.camera.name}: display timer ARRANCADO"
-            )
 
     def _process_pending_frame(self):
-        """Procesa frame pendiente"""
         if self.is_paused:
             self._pending_frame = None
             return
@@ -780,10 +676,6 @@ class CameraWidget(QFrame):
                 self._tm.stop(f"{self._owner}.display")
                 self._display_timer_running = False
                 self._empty_cycles = 0
-                logger.debug(
-                    f"⏸️ [widget] {self.camera.name}: display timer DETENIDO "
-                    f"(30 ciclos vacíos)"
-                )
             return
 
         self._empty_cycles = 0
@@ -796,10 +688,6 @@ class CameraWidget(QFrame):
             label_height = self.video_label.height()
 
             if label_width < 10 or label_height < 10:
-                logger.debug(
-                    f"⚠️ [widget] {self.camera.name}: label muy pequeño "
-                    f"({label_width}x{label_height}), frame descartado"
-                )
                 return
 
             target_size = QSize(label_width, label_height)
@@ -808,7 +696,7 @@ class CameraWidget(QFrame):
                 qimage,
                 target_size,
                 aspect_mode=Qt.KeepAspectRatio,
-                transform_mode=Qt.FastTransformation
+                transform_mode=Qt.FastTransformation,
             )
 
             if scaled_pixmap is not None:
@@ -818,30 +706,16 @@ class CameraWidget(QFrame):
                         "background-color: #000000; border-radius: 12px;"
                     )
                 self._apply_video_overlays()
-            else:
-                logger.debug(
-                    f"⚠️ [widget] {self.camera.name}: get_scaled devolvió None"
-                )
         except Exception as e:
             logger.debug(f"Error procesando frame: {e}")
 
     def _update_fps(self):
         self.fps_label.setText(f"FPS: {self._fps_counter}")
-        if not hasattr(self, '_fps_log_counter'):
-            self._fps_log_counter = 0
-        self._fps_log_counter += 1
-        if self._fps_log_counter % 30 == 0:
-            pending = 1 if self._pending_frame is not None else 0
-            logger.debug(
-                f"📊 [widget] {self.camera.name}: FPS={self._fps_counter}, "
-                f"pending={pending}, timer_running={self._display_timer_running}, "
-                f"empty_cycles={self._empty_cycles}"
-            )
         self._fps_counter = 0
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, '_pixmap_pool'):
+        if hasattr(self, "_pixmap_pool"):
             self._pixmap_pool.invalidate()
         if self._last_frame is not None and not self.is_paused:
             self.update_frame(self._last_frame)
@@ -851,35 +725,71 @@ class CameraWidget(QFrame):
         self._apply_video_overlays()
 
     def _apply_config_update(self, cfg: dict):
-        """Aplica cambios de config al widget SIN reiniciar"""
-        logger.debug(
-            f"🔧 [config] {self.camera.name}: aplicando nueva config "
-            f"(min={cfg.get('camera_widget_min_width')}x"
-            f"{cfg.get('camera_widget_min_height')}, "
-            f"anim={cfg.get('anim_duration_ms')}ms)"
-        )
-
         self.setMinimumSize(
             cfg.get("camera_widget_min_width", 320),
-            cfg.get("camera_widget_min_height", 280)
+            cfg.get("camera_widget_min_height", 280),
         )
         self.setMaximumSize(
             cfg.get("camera_widget_max_width", 480),
-            cfg.get("camera_widget_max_height", 400)
+            cfg.get("camera_widget_max_height", 400),
         )
-
-        if hasattr(self, 'expand_animation'):
+        if hasattr(self, "expand_animation"):
             self.expand_animation.setDuration(cfg.get("anim_duration_ms", 350))
 
-        logger.debug(f"  🔧 Config actualizada en widget {self.camera.name}")
+    # ==================== VIDEO OVERLAYS ====================
+
+    def _apply_video_overlays(self, force: bool = False):
+        try:
+            from core.extension_registry import get_extension_registry
+            from core.extensions.interfaces import VideoOverlay
+
+            registry = get_extension_registry()
+            overlays = registry.get(VideoOverlay)
+
+            if not overlays:
+                return
+
+            overlay_ids = tuple(id(o) for o in overlays)
+            if not force and getattr(self, "_applied_overlay_ids", None) == overlay_ids:
+                for widget in self.video_frame.findChildren(QWidget):
+                    if hasattr(widget, "_is_video_overlay"):
+                        self._position_overlay(widget)
+                return
+
+            overlays = sorted(
+                overlays,
+                key=lambda o: o.get_priority() if hasattr(o, "get_priority") else 50,
+                reverse=True,
+            )
+
+            for overlay in overlays:
+                try:
+                    if not overlay.should_show(self.camera.id):
+                        continue
+                    widget = overlay.get_overlay_widget(self.camera.id)
+                    if widget is None:
+                        continue
+                    if widget.parent() is not self.video_frame:
+                        widget.setParent(self.video_frame)
+                        widget.raise_()
+                    widget._is_video_overlay = True
+                    self._position_overlay(widget)
+                except Exception as e:
+                    logger.debug(f"Error aplicando VideoOverlay: {e}")
+        except Exception:
+            pass
+
+    def _position_overlay(self, widget):
+        try:
+            frame_w = self.video_frame.width()
+            widget.adjustSize()
+            widget.move(max(4, frame_w - widget.width() - 4), 4)
+        except Exception:
+            pass
 
     # ==================== STATUS ====================
 
     def set_status(self, status: CameraStatus):
-        logger.debug(
-            f"🔄 [widget] {self.camera.name}: status {self.camera.status} → {status}"
-        )
-
         self._apply_status_style(status)
 
         status_texts = {
@@ -887,77 +797,39 @@ class CameraWidget(QFrame):
             CameraStatus.CONNECTING: "● Conectando...",
             CameraStatus.CONNECTED: "● Conectado",
             CameraStatus.ERROR: "● Error",
-            CameraStatus.RECORDING: "● Grabando"
+            CameraStatus.RECORDING: "● Grabando",
         }
         status_colors = {
             CameraStatus.DISCONNECTED: "#888",
             CameraStatus.CONNECTING: "#FF9800",
             CameraStatus.CONNECTED: "#4CAF50",
             CameraStatus.ERROR: "#f44336",
-            CameraStatus.RECORDING: "#FF9800"
+            CameraStatus.RECORDING: "#FF9800",
         }
         self.status_label.setText(status_texts.get(status, "● Desconocido"))
         color = status_colors.get(status, "#888")
-        self.status_label.setStyleSheet(f"QLabel {{ color: {color}; font-size: 11px; }}")
+        self.status_label.setStyleSheet(
+            f"QLabel {{ color: {color}; font-size: 11px; }}"
+        )
 
     # ==================== GRABACIÓN ====================
 
     def _toggle_recording(self):
-        """Alterna la grabación. Si no hay audio activo, pregunta antes de grabar."""
-        from audio.audio_manager import audio_manager
-
-        # ✅ NUEVO: Si va a EMPEZAR a grabar y no hay audio activo, preguntar
-        if not self.is_recording:
-            supports_audio = not self.camera.is_screen and not self.camera.is_local
-            if supports_audio:
-                audio_active = audio_manager.is_camera_audio_active(self.camera.id)
-                if not audio_active:
-                    logger.debug(
-                        f"🎬 [widget] {self.camera.name}: grabación sin audio, "
-                        f"preguntando al usuario"
-                    )
-                    reply = QMessageBox.question(
-                        self,
-                        "Grabar con audio",
-                        f"¿Deseas activar el audio para esta grabación de "
-                        f"'{self.camera.name}'?\n\n"
-                        f"Si eliges 'Sí', se activará el audio y se escuchará "
-                        f"mientras grabas.\n"
-                        f"Si eliges 'No', la grabación será silenciosa.",
-                        QMessageBox.Yes | QMessageBox.No,
-                        QMessageBox.Yes
-                    )
-
-                    if reply == QMessageBox.Yes:
-                        logger.info(
-                            f"🎤 [widget] Usuario activó audio para grabación"
-                        )
-                        if not self.audio_btn.isChecked():
-                            self.audio_btn.setChecked(True)
-                            self._toggle_audio(True)
-                    else:
-                        logger.info(
-                            f"🔇 [widget] Usuario eligió grabar sin audio"
-                        )
-
+        """
+        Alterna grabación. La pregunta de "activar audio" la maneja
+        el plugin de audio escuchando recording_toggled, no este widget.
+        """
         self.is_recording = not self.is_recording
-
-        logger.debug(
-            f"🎬 [widget] {self.camera.name}: grabación "
-            f"{'INICIADA' if self.is_recording else 'DETENIDA'}"
-        )
 
         if self.is_recording:
             self.record_btn.setText("⏹ Detener")
             self.record_btn.setProperty("type", "danger")
             self.recording_time = 0
-            if self._tm.exists(f"{self._owner}.recording") and not self._tm.is_running(f"{self._owner}.recording"):
-                self._tm.start(f"{self._owner}.recording", 1000)
             self._tm.create(
                 f"{self._owner}.recording",
                 1000,
                 self._update_recording_indicator,
-                start=True
+                start=True,
             )
         else:
             self.record_btn.setText("🎬 Grabar")
@@ -975,9 +847,6 @@ class CameraWidget(QFrame):
         self.status_label.setText(f"● Grabando {minutes:02d}:{seconds:02d}")
 
     def show_error(self, error_message: str):
-        logger.debug(
-            f"❌ [widget] {self.camera.name}: {error_message}"
-        )
         self.video_label.setText(f"⚠️\n{error_message}")
         self.video_label.setStyleSheet(
             "color: #f44336; font-size: 12px; "
@@ -988,13 +857,6 @@ class CameraWidget(QFrame):
     # ==================== CLEANUP ====================
 
     def cleanup(self):
-        """Limpia recursos al eliminar el widget"""
-        logger.debug(f"🧹 [cleanup] INICIO: {self.camera.name}")
-        logger.debug(
-            f"🧹 [cleanup] Timers activos del owner '{self._owner}': "
-            f"{[n for n in self._tm.list_timers() if n.startswith(self._owner)]}"
-        )
-
         try:
             from audio.audio_manager import audio_manager
             audio_manager.stop_camera_audio(self.camera.id)
@@ -1002,10 +864,6 @@ class CameraWidget(QFrame):
             pass
 
         self._tm.stop_group(self._owner)
-        logger.debug(
-            f"🧹 [cleanup] Timers tras stop_group: "
-            f"{[n for n in self._tm.list_timers() if n.startswith(self._owner)]}"
-        )
         self._display_timer_running = False
         self._empty_cycles = 0
 
@@ -1015,7 +873,18 @@ class CameraWidget(QFrame):
         except Exception:
             pass
 
-        if hasattr(self, '_pixmap_pool'):
+        if hasattr(self, "_pixmap_pool"):
             self._pixmap_pool.clear()
-            
-        logger.debug(f"🧹 [cleanup] FIN: {self.camera.name}")
+
+        # Limpiar widgets inyectados
+        for layout in (self._header_layout_ref, self._footer_layout_ref):
+            if layout is None:
+                continue
+            for i in reversed(range(layout.count())):
+                item = layout.itemAt(i)
+                if item is None:
+                    continue
+                w = item.widget()
+                if w is not None and w.property("_is_plugin_widget"):
+                    w.setParent(None)
+                    w.deleteLater()

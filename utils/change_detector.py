@@ -61,6 +61,8 @@ class ChangeDetector:
 
     # Cambios que se aplican EN CALIENTE sin reiniciar
     HOT_RELOAD = {
+        # Activación de plugins de detección
+        "motion_enabled", "face_enabled",
         # Throttle
         "throttle_enabled", "throttle_target_cpu", "throttle_target_gpu",
         "throttle_max_skip", "throttle_check_interval",
@@ -103,6 +105,7 @@ class ChangeDetector:
 
     # Cambios que requieren recargar solo el detector de movimiento
     MOTION_ONLY = {
+        "motion_enabled",
         "motion_method", "motion_use_shadow_removal",
         "motion_use_shape_filter", "motion_min_density",
         "motion_min_consecutive_frames", "motion_learning_rate",
@@ -115,6 +118,7 @@ class ChangeDetector:
 
     # Cambios que requieren recargar solo el FaceRecognizer
     FACE_ONLY = {
+        "face_enabled",
         "face_detector_model", "face_auto_register_unknown",
         "face_min_face_size", "face_recognition_scale",
         "face_detector_score_threshold", "face_nms_threshold",

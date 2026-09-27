@@ -1,75 +1,69 @@
 {
-  "version": "1.0",
-  "plugins": {
-    "audio": {
-      "version": "1.0.0",
-      "description": "Audio para cámaras IP y micrófono local",
-      "author": "ProCamera",
-      "dependencies": [],
-      "capabilities": ["audio_access", "settings_read", "settings_write", "network"],
-      "enabled_by_default": true,
-      "auto_load": true,
-      "requires_debug": false
-    },
-    "debug_console": {
-      "version": "1.0.0",
-      "description": "Consola de logs en tiempo real",
-      "author": "ProCamera",
-      "dependencies": [],
-      "capabilities": ["ui_modify", "settings_read", "settings_write"],
-      "enabled_by_default": true,
-      "auto_load": true,
-      "requires_debug": true
-    },
-    "document_scanner": {
-      "version": "1.0.0",
-      "description": "Escaneo de documentos con OCR",
-      "author": "ProCamera",
-      "dependencies": ["image_enhancer"],
-      "capabilities": ["camera_access", "settings_read", "settings_write", "read_files", "write_files"],
-      "enabled_by_default": true,
-      "auto_load": true,
-      "requires_debug": false
-    },
-    "face_recognizer": {
-      "version": "1.0.0",
-      "description": "Reconocimiento facial (SFace, dlib, MediaPipe)",
-      "author": "ProCamera",
-      "dependencies": [],
-      "capabilities": ["camera_access", "settings_read", "settings_write", "read_files"],
-      "enabled_by_default": true,
-      "auto_load": true,
-      "requires_debug": false
-    },
-    "image_enhancer": {
-      "version": "1.0.0",
-      "description": "Mejora de imágenes con presets y análisis de calidad",
-      "author": "ProCamera",
-      "dependencies": [],
-      "capabilities": ["settings_read", "settings_write", "read_files", "write_files"],
-      "enabled_by_default": true,
-      "auto_load": true,
-      "requires_debug": false
-    },
-    "motion_detector": {
-      "version": "1.0.0",
-      "description": "Detección de movimiento (MOG2, KNN, frame_diff)",
-      "author": "ProCamera",
-      "dependencies": [],
-      "capabilities": ["camera_access", "settings_read", "settings_write"],
-      "enabled_by_default": true,
-      "auto_load": true,
-      "requires_debug": false
-    },
-    "notifications": {
-      "version": "1.0.0",
-      "description": "Notificaciones nativas Windows y por Telegram",
-      "author": "ProCamera",
-      "dependencies": [],
-      "capabilities": ["notifications", "telegram", "network", "settings_read", "settings_write", "read_files"],
-      "enabled_by_default": true,
-      "auto_load": true,
-      "requires_debug": false
+    "plugins": {
+        "audio": {
+            "version": "1.0.0",
+            "description": "Captura y reproducción de audio",
+            "author": "ProCamera",
+            "enabled_by_default": true,
+            "auto_load": true,
+            "capabilities": ["audio_access"]
+        },
+        "motion_detector": {
+            "version": "1.0.0",
+            "description": "Detección de movimiento",
+            "author": "ProCamera",
+            "enabled_by_default": true,
+            "auto_load": true,
+            "capabilities": ["camera_access"]
+        },
+        "face_recognizer": {
+            "version": "1.0.0",
+            "description": "Reconocimiento facial",
+            "author": "ProCamera",
+            "enabled_by_default": true,
+            "auto_load": true,
+            "capabilities": ["camera_access"]
+        },
+        "document_scanner": {
+            "version": "1.0.0",
+            "description": "Escaneo de documentos",
+            "author": "ProCamera",
+            "enabled_by_default": true,
+            "auto_load": true,
+            "capabilities": ["camera_access"]
+        },
+        "image_enhancer": {
+            "version": "1.0.0",
+            "description": "Mejora interactiva de imágenes",
+            "author": "ProCamera",
+            "enabled_by_default": true,
+            "auto_load": true,
+            "capabilities": []
+        },
+        "notifications": {
+            "version": "1.0.0",
+            "description": "Notificaciones (Windows, Telegram)",
+            "author": "ProCamera",
+            "enabled_by_default": true,
+            "auto_load": true,
+            "capabilities": ["network", "notifications", "telegram"]
+        },
+        "debug_console": {
+            "version": "1.0.0",
+            "description": "Consola de debug integrada",
+            "author": "ProCamera",
+            "enabled_by_default": false,
+            "auto_load": false,
+            "requires_debug": true,
+            "capabilities": ["ui_modify"]
+        },
+        "camera_controls": {
+            "version": "1.0.0",
+            "description": "Controla hardware de cámara IP (flash)",
+            "author": "ProCamera",
+            "enabled_by_default": true,
+            "auto_load": true,
+            "capabilities": ["camera_control"]
+        }
     }
-  }
 }

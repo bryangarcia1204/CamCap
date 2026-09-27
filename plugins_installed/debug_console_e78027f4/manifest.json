@@ -1,0 +1,15 @@
+{
+  "version": "1.0",
+  "plugins": {
+    "debug_console": {
+      "version": "1.0.0",
+      "description": "Consola de logs en tiempo real",
+      "author": "ProCamera",
+      "dependencies": [],
+      "capabilities": ["ui_modify", "settings_read", "settings_write"],
+      "enabled_by_default": true,
+      "auto_load": true,
+      "requires_debug": true
+    }
+  }
+}

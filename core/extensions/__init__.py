@@ -59,10 +59,8 @@ from .interfaces import (
     DocumentScannerProvider,
     AudioManagerProvider,
     NotificationsProvider,
-
-    CameraWidgetExtension,
-    DialogExtension,
-    ToolbarContribution,
+    # ✅ UI genérica
+    UIExtension,
 )
 
 from .types import (
@@ -175,7 +173,6 @@ __all__ = [
     "config_tab",
     "theme_provider",
 
-    "CameraWidgetExtension",
-    "DialogExtension",
-    "ToolbarContribution",
+    # ✅ UI genérica
+    "UIExtension",
 ]

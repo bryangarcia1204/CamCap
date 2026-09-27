@@ -1,0 +1,1 @@
+"""Plugin for camera controls."""

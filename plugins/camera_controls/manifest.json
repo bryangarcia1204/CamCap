@@ -1,0 +1,10 @@
+{
+    "name": "camera_controls",
+    "version": "1.0.0",
+    "description": "Controla hardware de cámara IP (flash)",
+    "author": "ProCamera",
+    "dependencies": [],
+    "capabilities": ["camera_control"],
+    "enabled_by_default": true,
+    "auto_load": true
+}

@@ -71,6 +71,8 @@ from core.extensions.interfaces import (
     Logger,
     NotificationProvider,
     TaskScheduler,
+    # ✅ UI genérica
+    UIExtension,
 )
 
 from core.extensions.types import (
@@ -102,6 +104,7 @@ __all__ = [
     "FileHandler", "StorageProvider", "ImportProvider", "ExportProvider",
     "PluginWrapper", "PluginLifecycleHook", "PluginValidator",
     "Logger", "NotificationProvider", "TaskScheduler",
+    "UIExtension",
 
     # Tipos
     "Priority", "CameraProtocol", "FrameFormat",

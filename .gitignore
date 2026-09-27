@@ -21,6 +21,7 @@ known_faces/
 *.bat
 *.sh
 *.zip
+*.onnx
 
 # IDEs
 .vscode/

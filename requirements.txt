@@ -1,0 +1,23 @@
+PySide6>=6.5.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+requests>=2.31.0
+Pillow>=10.0.0
+pygame>=2.5.0
+pyaudio>=0.2.13
+psutil>=5.9.0
+av>=10.0.0
+sounddevice>=0.4.6
+
+# GPU (opcional, instala el que corresponda)
+# pynvml>=11.5.0      # NVIDIA (recomendado)
+# GPUtil>=1.4.0       # NVIDIA (alternativa)
+# pyadl>=0.0.1        # AMD
+# face_recognition>=1.3.0
+# dlib-bin>=19.24.0
+
+# Opcionales
+pytesseract>=0.3.10
+win10toast>=0.9
+plyer>=2.1.0
+send2trash>=1.8.0

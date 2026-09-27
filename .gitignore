@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+logs/
+
+# PyInstaller
+*.spec
+dist/
+build/
+debug_faces/
+detected/
+known_faces/
+*.bat
+*.sh
+*.zip
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Proyecto
+*.log
+*.mp4
+*.avi
+*.mkv
+*.jpg
+*.png
+*.bmp
+*.temp/
+temp_frames/
+screenshots/
+
+# Configuración personal
+config.ini
+*.ini.user
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Recursos
+resources/icon.ico
+*.ico
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/

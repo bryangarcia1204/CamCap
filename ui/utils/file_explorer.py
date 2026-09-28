@@ -15,7 +15,7 @@ from PySide6.QtCore import Qt, QDir, Signal, QSize, QThreadPool
 from PySide6.QtWidgets import QFileSystemModel
 from PySide6.QtGui import QAction, QIcon, QPixmap, QImage
 
-from ui.video_thumbnail_worker import video_thumbnail_manager
+from ui.video.video_thumbnail_worker import video_thumbnail_manager
 
 from core.file_manager import FileManager
 from core.models import CaptureSettings

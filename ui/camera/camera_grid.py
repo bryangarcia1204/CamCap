@@ -9,7 +9,7 @@ from PySide6.QtGui import QKeyEvent, QMouseEvent
 from typing import List, Optional, Set
 
 from core.models import CameraDevice
-from ui.camera_widget import CameraWidget
+from ui.camera.camera_widget import CameraWidget
 from utils.logger import get_logger
 
 logger = get_logger("CameraGrid")

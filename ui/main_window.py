@@ -27,14 +27,14 @@ from PySide6.QtGui import QAction, QKeySequence
 from core.models import CameraDevice, CameraStatus
 from core.settings_manager import settings_manager
 from core.engine.camera_engine import CameraManager
-from ui.video_preview import VideoPreview
+from ui.video.video_preview import VideoPreview
 from core.file_manager import FileManager
-from ui.camera_grid import CameraGrid
-from ui.file_explorer import FileExplorer
-from ui.settings_dialog import SettingsDialog
-from ui.image_preview import ImagePreview
-from ui.loading_manager import LoadingManager, LoadingContext
-from ui.system_monitor_widget import SystemMonitorWidget
+from ui.camera.camera_grid import CameraGrid
+from ui.utils.file_explorer import FileExplorer
+from ui.settings.settings_dialog import SettingsDialog
+from ui.image.image_preview import ImagePreview
+from ui.loaders.loading_manager import LoadingManager, LoadingContext
+from ui.utils.system_monitor_widget import SystemMonitorWidget
 from utils.logger import get_logger
 from utils.system_monitor import system_monitor
 from utils.timer_manager import timer_manager
@@ -584,7 +584,7 @@ class MainWindow(QMainWindow):
 
     def _show_auto_record_dialog(self, camera_id: int, timeout: int):
         try:
-            from ui.auto_record_dialog import AutoRecordDialog
+            from ui.audio.auto_record_dialog import AutoRecordDialog
             camera = self.camera_manager.get_camera(camera_id)
             if not camera:
                 return
@@ -864,7 +864,7 @@ class MainWindow(QMainWindow):
 
     def _save_image(self, frame: np.ndarray, camera: CameraDevice):
         try:
-            from ui.image_preview_dialog import ImagePreviewDialog
+            from ui.image.image_preview_dialog import ImagePreviewDialog
             dialog = ImagePreviewDialog(frame, camera.name, self)
             if dialog.exec() == QDialog.Accepted:
                 filename, directory, use_default, frame = dialog.get_save_data()
@@ -1184,7 +1184,7 @@ class MainWindow(QMainWindow):
         # Thumbnail
         if "thumbnail" in modules:
             try:
-                from ui.video_thumbnail_worker import video_thumbnail_manager
+                from ui.video.video_thumbnail_worker import video_thumbnail_manager
                 cfg = advanced_config.get_all()
                 video_thumbnail_manager.thread_pool.setMaxThreadCount(
                     cfg.get("video_thumbnail_workers", 2)
@@ -1481,7 +1481,7 @@ class MainWindow(QMainWindow):
             logger.error(f"Error deteniendo timers: {e}")
 
         try:
-            from ui.video_thumbnail_worker import video_thumbnail_manager
+            from ui.video.video_thumbnail_worker import video_thumbnail_manager
             video_thumbnail_manager.cleanup()
         except Exception:
             pass

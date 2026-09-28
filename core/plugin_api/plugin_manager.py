@@ -93,32 +93,28 @@ class PluginManager:
         - Carpetas: plugins/<name>/
         - Paquetes ZIP: plugins/<name>.zip
 
-        Returns:
-            Número de plugins descubiertos.
+        Auto-registro de manifests:
+        - Cada plugin puede tener su propio manifest.json en su carpeta.
+        - El manifest global (plugins/manifest.json) es opcional y sirve
+          como override.
+        - Los campos del manifest local tienen prioridad.
         """
+        from core.plugin_api.manifest_loader import get_manifest_loader
+
         self._plugins_dir = plugins_dir
 
         if not os.path.isdir(plugins_dir):
             logger.error(f"❌ Directorio de plugins no existe: {plugins_dir}")
             return 0
 
-        # Cargar manifest.json global si existe
-        manifest_path = os.path.join(plugins_dir, "manifest.json")
-        manifest = {}
-        if os.path.isfile(manifest_path):
-            try:
-                with open(manifest_path, "r", encoding="utf-8") as f:
-                    manifest = json.load(f)
-                logger.debug(f"📋 Manifest cargado: {manifest_path}")
-            except Exception as e:
-                logger.warning(f"⚠️ Error leyendo manifest: {e}")
+        # Cargar manifest global si existe
+        manifest_loader = get_manifest_loader()
+        global_manifest_path = os.path.join(plugins_dir, "manifest.json")
+        manifest_loader.load_global(global_manifest_path)
 
-        manifest_plugins = manifest.get("plugins", {})
-
-        # ✅ NUEVO: Extraer paquetes ZIP primero
+        # Extraer paquetes ZIP primero
         zip_plugins = self._install_zip_packages(plugins_dir)
 
-        # Escanear subdirectorios + ZIPs extraídos
         discovered = 0
         searched_paths: List[Tuple[str, str]] = []  # (name, path)
 
@@ -136,33 +132,34 @@ class PluginManager:
         for pkg_name, pkg_path in zip_plugins:
             searched_paths.append((pkg_name, pkg_path))
 
-        # 3. Registrar cada plugin
+        # 3. Registrar cada plugin con su manifest resuelto
         for entry, plugin_path in searched_paths:
             if entry in self._metadata:
                 logger.debug(f"⚠️ Plugin '{entry}' ya registrado, saltando")
                 continue
 
-            manifest_meta = manifest_plugins.get(entry, {})
+            # Resolver manifest (local + global + defaults)
+            resolved = manifest_loader.resolve(entry, plugin_path)
 
             metadata = PluginMetadata(
                 name=entry,
-                version=manifest_meta.get("version", "0.0.0"),
-                description=manifest_meta.get("description", ""),
-                author=manifest_meta.get("author", ""),
-                dependencies=manifest_meta.get("dependencies", []),
-                requires_debug=manifest_meta.get("requires_debug", False),
-                enabled_by_default=manifest_meta.get("enabled_by_default", True),
-                auto_load=manifest_meta.get("auto_load", True),
+                version=resolved.version,
+                description=resolved.description,
+                author=resolved.author,
+                dependencies=list(resolved.dependencies),
+                requires_debug=resolved.requires_debug,
+                enabled_by_default=resolved.enabled_by_default,
+                auto_load=resolved.auto_load,
                 path=os.path.abspath(plugin_path),
                 module_name=entry,
-                capabilities=manifest_meta.get("capabilities", []),
+                capabilities=list(resolved.capabilities),
             )
 
             self._metadata[entry] = metadata
             discovered += 1
             logger.debug(
-                f"🔍 Descubierto: {entry} (v{metadata.version}) "
-                f"en {plugin_path}"
+                f"🔍 Descubierto: {entry} (v{metadata.version}, "
+                f"src={resolved.source}) en {plugin_path}"
             )
 
         self._stats["total_discovered"] = discovered
@@ -760,8 +757,7 @@ class PluginManager:
         """
         Retorna info completa de un plugin para la GUI.
 
-        Returns:
-            dict con metadata + estado + capabilities + extensiones.
+        Incluye readme_content y readme_path si el plugin tiene README.md.
         """
         metadata = self._metadata.get(plugin_name)
         if metadata is None:
@@ -804,7 +800,6 @@ class PluginManager:
         zip_path = ""
         if "plugins_installed" in metadata.path:
             origin = "zip"
-            # Buscar el ZIP original
             try:
                 from plugins.package_loader import get_package_loader
                 loader = get_package_loader(os.path.dirname(self._plugins_dir or "."))
@@ -814,6 +809,16 @@ class PluginManager:
                         break
             except Exception:
                 pass
+
+        # ✅ NUEVO: Cargar README
+        readme_content = ""
+        readme_path = ""
+        try:
+            from core.plugin_api.manifest_loader import get_manifest_loader
+            loader = get_manifest_loader()
+            readme_content, readme_path = loader.load_readme(metadata.path)
+        except Exception:
+            pass
 
         return {
             "name": plugin_name,
@@ -832,6 +837,10 @@ class PluginManager:
             "is_failed": is_failed,
             "capabilities": capabilities,
             "extensions": extensions,
+            # ✅ NUEVO
+            "readme_content": readme_content,
+            "readme_path": readme_path,
+            "has_readme": bool(readme_content),
         }
 
     def get_all_plugin_info(self) -> List[dict]:

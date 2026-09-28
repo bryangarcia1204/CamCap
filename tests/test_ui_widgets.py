@@ -14,7 +14,7 @@ from core.models import CameraDevice, CameraStatus
 @pytest.mark.gui
 class TestCameraWidget:
     def test_create_widget(self, qapp, camera_ip):
-        from ui.camera_widget import CameraWidget
+        from ui.camera.camera_widget import CameraWidget
         widget = CameraWidget(camera_ip)
 
         assert widget.camera is camera_ip
@@ -25,13 +25,13 @@ class TestCameraWidget:
         widget.cleanup()
 
     def test_widget_has_pixmap_pool(self, qapp, camera_ip):
-        from ui.camera_widget import CameraWidget
+        from ui.camera.camera_widget import CameraWidget
         widget = CameraWidget(camera_ip)
         assert widget._pixmap_pool is not None
         widget.cleanup()
 
     def test_set_status(self, qapp, camera_ip):
-        from ui.camera_widget import CameraWidget
+        from ui.camera.camera_widget import CameraWidget
         widget = CameraWidget(camera_ip)
 
         widget.set_status(CameraStatus.CONNECTED)
@@ -50,7 +50,7 @@ class TestCameraWidget:
             staticmethod(lambda *args, **kwargs: QMessageBox.No)
         )
 
-        from ui.camera_widget import CameraWidget
+        from ui.camera.camera_widget import CameraWidget
         widget = CameraWidget(camera_ip)
 
         captured = []
@@ -70,7 +70,7 @@ class TestCameraWidget:
 
     def test_pause_stops_display_timer(self, qapp, camera_ip):
         """Verifica que pausar detiene el timer Y que el timer estaba corriendo"""
-        from ui.camera_widget import CameraWidget
+        from ui.camera.camera_widget import CameraWidget
         widget = CameraWidget(camera_ip)
 
         # Simular un frame para arrancar el timer
@@ -93,7 +93,7 @@ class TestCameraWidget:
         widget.cleanup()
 
     def test_cleanup_no_crash(self, qapp, camera_ip):
-        from ui.camera_widget import CameraWidget
+        from ui.camera.camera_widget import CameraWidget
         widget = CameraWidget(camera_ip)
         widget.cleanup()
         # No debe lanzar excepciones
@@ -102,24 +102,24 @@ class TestCameraWidget:
 @pytest.mark.gui
 class TestAudioLevelWidget:
     def test_create_horizontal(self, qapp):
-        from ui.audio_level_widget import AudioLevelWidget
+        from ui.audio.audio_level_widget import AudioLevelWidget
         widget = AudioLevelWidget(mode="horizontal")
         assert widget.mode == "horizontal"
 
     def test_create_compact(self, qapp):
-        from ui.audio_level_widget import AudioLevelWidget
+        from ui.audio.audio_level_widget import AudioLevelWidget
         widget = AudioLevelWidget(mode="compact")
         assert widget.mode == "compact"
 
     def test_set_level_starts_at_zero(self, qapp):
         """Un widget nuevo debe tener level=0"""
-        from ui.audio_level_widget import AudioLevelWidget
+        from ui.audio.audio_level_widget import AudioLevelWidget
         widget = AudioLevelWidget()
         assert widget._level == 0.0
 
     def test_set_level_rises(self, qapp):
         """Tras varias llamadas, el nivel debe subir"""
-        from ui.audio_level_widget import AudioLevelWidget
+        from ui.audio.audio_level_widget import AudioLevelWidget
         widget = AudioLevelWidget()
 
         initial = widget._level
@@ -131,7 +131,7 @@ class TestAudioLevelWidget:
 
     def test_set_level_converges_to_target(self, qapp):
         """Tras suficientes llamadas, debe converger al target"""
-        from ui.audio_level_widget import AudioLevelWidget
+        from ui.audio.audio_level_widget import AudioLevelWidget
         widget = AudioLevelWidget()
 
         for _ in range(50):
@@ -141,7 +141,7 @@ class TestAudioLevelWidget:
         assert 0.4 <= widget._level <= 0.6
 
     def test_reset(self, qapp):
-        from ui.audio_level_widget import AudioLevelWidget
+        from ui.audio.audio_level_widget import AudioLevelWidget
         widget = AudioLevelWidget()
 
         for _ in range(10):
@@ -152,6 +152,6 @@ class TestAudioLevelWidget:
         assert widget._peak == 0.0
 
     def test_cleanup_no_crash(self, qapp):
-        from ui.audio_level_widget import AudioLevelWidget
+        from ui.audio.audio_level_widget import AudioLevelWidget
         widget = AudioLevelWidget()
         widget.cleanup()

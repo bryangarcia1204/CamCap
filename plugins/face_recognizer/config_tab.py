@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QWidget
 )
 
-from ui.settings_dialog_base import PluginConfigTab
+from ui.settings.settings_dialog_base import PluginConfigTab
 
 
 class FaceRecognizerConfigTab(PluginConfigTab):

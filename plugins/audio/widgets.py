@@ -9,7 +9,7 @@ logger = get_logger("Plugin.AudioWidgets")
 def create_audio_widgets(camera_id: int, camera, camera_widget):
     """Crea los widgets de audio para una cámara."""
     from .audio_manager import audio_manager
-    from ui.audio_level_widget import AudioLevelWidget
+    from ui.audio.audio_level_widget import AudioLevelWidget
 
     # === Botón de audio ===
     audio_btn = QPushButton("🔊")
@@ -135,7 +135,7 @@ def create_audio_widgets(camera_id: int, camera, camera_widget):
 def create_vu_meter_big(camera_id: int, camera, camera_widget):
     """VU meter grande para el slot 'footer'."""
     from .audio_manager import audio_manager
-    from ui.audio_level_widget import AudioLevelWidget
+    from ui.audio.audio_level_widget import AudioLevelWidget
 
     vu = AudioLevelWidget(mode="horizontal")
     vu.setMinimumHeight(14)

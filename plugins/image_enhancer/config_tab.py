@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QComboBox, QCheckBox, QScrollArea, QWidget
 )
 
-from ui.settings_dialog_base import PluginConfigTab
+from ui.settings.settings_dialog_base import PluginConfigTab
 
 
 class ImageEnhancerConfigTab(PluginConfigTab):

@@ -11,7 +11,7 @@ import time
 from PySide6.QtGui import QImage
 from PySide6.QtCore import QCoreApplication
 
-from ui.video_thumbnail_worker import (
+from ui.video.video_thumbnail_worker import (
     VideoThumbnailWorker,
     VideoThumbnailManager,
     ThumbnailSignals,

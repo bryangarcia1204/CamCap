@@ -131,7 +131,7 @@ def load_stylesheet(app):
 
 
 def load_application_staged(app, splash):
-    from ui.loading_manager import LoadingManager
+    from ui.loaders.loading_manager import LoadingManager
     from core.settings_manager import settings_manager
 
     splash.update_stage("Cargando configuración básica...", 10,
@@ -287,7 +287,7 @@ def main():
     logger.info("⏱️ TimerManager listo")
 
     # Splash
-    from ui.loading_manager import LoadingManager
+    from ui.loaders.loading_manager import LoadingManager
     splash = LoadingManager.init_splash()
     splash.set_progress(0, "Iniciando ProCamera...", force=True)
 

@@ -64,6 +64,17 @@
             "enabled_by_default": true,
             "auto_load": true,
             "capabilities": ["camera_control"]
+        },
+        "motion_capture_export":{
+        "name": "motion_capture_export",
+        "version": "1.0.0",
+        "description": "Captura de movimiento desde video (YOLO+MediaPipe) para Blender",
+        "author": "ProCamera",
+        "dependencies": [],
+        "capabilities": ["read_files", "write_files", "process_execution"],
+        "enabled_by_default": false,
+        "auto_load": true,
+        "requires_debug": false
         }
     }
 }

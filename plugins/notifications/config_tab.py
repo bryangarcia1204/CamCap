@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
-from ui.settings.settings_dialog_base import PluginConfigTab
+from ui.settings_dialog_base import PluginConfigTab
 
 
 class NotificationsConfigTab(PluginConfigTab):

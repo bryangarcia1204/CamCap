@@ -9,9 +9,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal
 
-from ui.plugins.plugin_card import PluginCard
-from ui.plugins.plugin_info_dialog import PluginInfoDialog
-from ui.plugins.plugin_install_dialog import PluginInstallDialog
+from ui.plugin_card import PluginCard
+from ui.plugin_info_dialog import PluginInfoDialog
+from ui.plugin_install_dialog import PluginInstallDialog
 from core.plugin_api import get_plugin_manager
 from utils.logger import get_logger
 

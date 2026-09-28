@@ -3,7 +3,7 @@ Gestor unificado para splash screen y loading overlay
 Uso simplificado con context manager
 """
 from PySide6.QtWidgets import QApplication
-from ui.loaders.splash_screen import SplashScreen
+from ui.splash_screen import SplashScreen
 
 
 class LoadingManager:
@@ -41,7 +41,7 @@ class LoadingManager:
     @classmethod
     def init_overlay(cls, parent):
         """Inicializa el overlay para una ventana"""
-        from ui.loaders.loading_overlay import LoadingOverlay
+        from ui.loading_overlay import LoadingOverlay
         cls._overlay = LoadingOverlay(parent)
         return cls._overlay
     

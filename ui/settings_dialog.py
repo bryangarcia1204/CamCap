@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout,
                                QDoubleSpinBox, QScrollArea, QInputDialog)
 from PySide6.QtCore import Qt, Signal
 
-from ui.loaders.loading_manager import LoadingManager
+from ui.loading_manager import LoadingManager
 from core.models import (CameraDevice, ImageFormat, VideoFormat,
                     CaptureSettings, Resolution)
 from utils.timer_manager import timer_manager
@@ -172,7 +172,7 @@ class SettingsDialog(QDialog):
 
     def _open_plugin_manager(self):
         """Abre el Plugin Manager."""
-        from ui.plugins.plugin_manager_dialog import PluginManagerDialog
+        from ui.plugin_manager_dialog import PluginManagerDialog
 
         dialog = PluginManagerDialog(self)
         dialog.plugins_changed.connect(self._on_plugins_changed)

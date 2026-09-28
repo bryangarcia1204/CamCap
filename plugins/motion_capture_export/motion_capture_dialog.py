@@ -2,31 +2,23 @@
 MotionCaptureDialog — Diálogo dedicado para gestionar el plugin
 de captura de movimiento.
 
+Soporta DOS modos:
+  - Video File: procesa un archivo de video y exporta a JSON/CSV/BVH.
+  - Live Camera: procesa frames en vivo desde las cámaras de CamCap
+    y los envía a Blender por socket TCP en tiempo real.
+
 Estructura:
   ┌──────────────────────────────────────────────────────────────┐
   │  🎬 Motion Capture Studio                                    │
+  │  Modo: [📁 Video File] [📡 Live Camera]                      │
   ├──────────────────────────────┬───────────────────────────────┤
-  │  INPUT                        │  PREVIEW                      │
-  │  - Selector de video          │  - Frame actual               │
-  │  - Info del video             │  - Landmarks dibujados        │
-  │  - Botón procesar             │  - Bounding boxes             │
-  │                               │  - Track IDs                  │
-  │  CONFIG TRACKER               │                               │
-  │  - Modelo YOLO                │                               │
-  │  - Confianza                  │                               │
-  │  - Complejidad MP             │                               │
-  │  - Frame skip                 │                               │
-  │                               │                               │
-  │  OUTPUT                       │                               │
-  │  - Formato (JSON/CSV)         │                               │
-  │  - Ruta                       │                               │
+  │  INPUT (cambia según modo)    │  PREVIEW                      │
+  │  CONFIG TRACKER (común)       │  - Frame actual               │
+  │  OUTPUT (solo Video)          │  - Landmarks                  │
   ├──────────────────────────────┴───────────────────────────────┤
-  │  [▶ Procesar]  [⏹ Detener]  [📂 Abrir carpeta]              │
-  │  ███████████░░░░░░░░░░░░░░░░  45%  ETA 12s                    │
+  │  [▶ Iniciar]  [⏹ Detener]   Status...                        │
   ├──────────────────────────────────────────────────────────────┤
   │  LOG                                                          │
-  │  > Cargando video...                                          │
-  │  > Procesando frame 45/100...                                 │
   └──────────────────────────────────────────────────────────────┘
 """
 import os
@@ -38,7 +30,8 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QComboBox, QSpinBox,
     QDoubleSpinBox, QCheckBox, QFileDialog, QProgressBar,
     QGroupBox, QTextEdit, QMessageBox, QSplitter, QFrame,
-    QSizePolicy, QApplication,
+    QSizePolicy, QApplication, QButtonGroup, QRadioButton,
+    QStackedWidget, QWidget,
 )
 from PySide6.QtCore import Qt, QTimer, Signal, QThread, QObject
 from PySide6.QtGui import QImage, QPixmap, QColor, QPainter, QPen
@@ -72,16 +65,14 @@ def format_size(bytes_: int) -> str:
 
 
 # ============================================================
-# WORKER QUE CORRE EN HILO
+# WORKER PARA MODO VIDEO (batch)
 # ============================================================
 
 class ProcessingWorker(QObject):
-    """
-    Worker que corre el VideoProcessor en un hilo separado.
-    Emite señales para actualizar la UI sin bloquear.
-    """
-    progress = Signal(int, int, float, float)  # current, total, fps, eta
-    finished = Signal(str)                     # error (vacío si OK)
+    """Worker que corre el VideoProcessor en un hilo separado."""
+
+    progress = Signal(int, int, float, float)
+    finished = Signal(str)
     log_message = Signal(str)
 
     def __init__(self, plugin, config: Dict[str, Any]):
@@ -90,7 +81,6 @@ class ProcessingWorker(QObject):
         self._config = config
 
     def run(self):
-        """Arranca el procesamiento. Se llama desde QThreadPool o un QThread."""
         try:
             def on_progress(p):
                 self.progress.emit(
@@ -121,30 +111,41 @@ class MotionCaptureDialog(QDialog):
     """
     Diálogo dedicado para el plugin MotionCaptureExport.
 
-    - Carga video
-    - Configura tracker
-    - Procesa en background con progreso en vivo
-    - Preview del frame actual con landmarks (opcional)
+    Modos:
+      - Video File: procesa un archivo y exporta a JSON/CSV/BVH.
+      - Live Camera: procesa frames en vivo y los envía por socket.
     """
+
+    # Modos
+    MODE_VIDEO = "video"
+    MODE_LIVE = "live"
 
     def __init__(self, plugin, parent=None):
         super().__init__(parent)
         self._plugin = plugin
+        self._mode = self.MODE_VIDEO
+
+        # Estado modo video
         self._video_path = ""
         self._output_path = ""
         self._worker_thread: Optional[QThread] = None
         self._worker: Optional[ProcessingWorker] = None
         self._is_processing = False
         self._preview_enabled = True
-        self._last_preview_time = 0.0
+
+        # Estado modo live
+        self._live_capture = None
+        self._socket_server = None
+        self._is_live = False
+        self._live_status_timer_name = "motion_capture_dialog.live_status"
 
         self.setWindowTitle("🎬 Motion Capture Studio")
-        self.setMinimumSize(1100, 720)
+        self.setMinimumSize(1150, 780)
         self.setModal(False)
 
         self._setup_ui()
-        self._connect_signals()
         self._load_plugin_config()
+        self._update_mode_ui()
 
         logger.debug("MotionCaptureDialog abierto")
 
@@ -203,6 +204,15 @@ class MotionCaptureDialog(QDialog):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #d32f2f, stop:1 #ef5350);
             }
+            QPushButton[type="live"] {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #6a1b9a, stop:1 #8e24aa);
+                border: none;
+            }
+            QPushButton[type="live"]:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #7b1fa2, stop:1 #ab47bc);
+            }
             QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
                 background: rgba(255,255,255,0.08);
                 border: 1px solid rgba(255,255,255,0.15);
@@ -245,6 +255,32 @@ class MotionCaptureDialog(QDialog):
                 border: 1px solid rgba(255,255,255,0.1);
                 border-radius: 8px;
             }
+            QFrame#mode_selector {
+                background: rgba(255,255,255,0.03);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 8px;
+                padding: 8px;
+            }
+            QRadioButton {
+                color: white;
+                font-weight: 600;
+                padding: 6px 12px;
+                spacing: 8px;
+            }
+            QRadioButton::indicator {
+                width: 14px;
+                height: 14px;
+            }
+            QRadioButton::indicator:checked {
+                background: #4da0c4;
+                border: 2px solid white;
+                border-radius: 7px;
+            }
+            QRadioButton::indicator:unchecked {
+                background: transparent;
+                border: 2px solid rgba(255,255,255,0.3);
+                border-radius: 7px;
+            }
         """)
 
         main_layout = QVBoxLayout(self)
@@ -259,50 +295,70 @@ class MotionCaptureDialog(QDialog):
         title_row.addStretch()
 
         help_btn = QPushButton("❓ Ayuda")
-        help_btn.setProperty("type", "secondary")
         help_btn.setFixedHeight(30)
         help_btn.clicked.connect(self._show_help)
         title_row.addWidget(help_btn)
 
         main_layout.addLayout(title_row)
 
+        # === Selector de modo ===
+        mode_frame = QFrame()
+        mode_frame.setObjectName("mode_selector")
+        mode_layout = QHBoxLayout(mode_frame)
+        mode_layout.setContentsMargins(8, 4, 8, 4)
+        mode_layout.setSpacing(16)
+
+        mode_label = QLabel("Modo:")
+        mode_label.setStyleSheet(
+            "color: rgba(255,255,255,0.7); font-weight: bold;"
+        )
+        mode_layout.addWidget(mode_label)
+
+        self.mode_video_radio = QRadioButton("📁 Video File")
+        self.mode_video_radio.setChecked(True)
+        self.mode_video_radio.toggled.connect(self._on_mode_changed)
+        mode_layout.addWidget(self.mode_video_radio)
+
+        self.mode_live_radio = QRadioButton("📡 Live Camera")
+        self.mode_live_radio.toggled.connect(self._on_mode_changed)
+        mode_layout.addWidget(self.mode_live_radio)
+
+        mode_layout.addStretch()
+
+        # Info del modo
+        self.mode_info_label = QLabel("")
+        self.mode_info_label.setStyleSheet(
+            "color: rgba(255,255,255,0.5); font-size: 11px;"
+        )
+        mode_layout.addWidget(self.mode_info_label)
+
+        main_layout.addWidget(mode_frame)
+
         # === Splitter principal ===
         splitter = QSplitter(Qt.Horizontal)
 
-        # ---------- Columna izquierda: controles ----------
+        # ---------- Columna izquierda ----------
         left = QFrame()
-        left.setMinimumWidth(380)
-        left.setMaximumWidth(480)
+        left.setMinimumWidth(400)
+        left.setMaximumWidth(500)
         left_layout = QVBoxLayout(left)
         left_layout.setSpacing(12)
         left_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Input
-        input_group = QGroupBox("📁 Video de Entrada")
-        input_layout = QVBoxLayout(input_group)
+        # --- INPUT (stacked widget, cambia según modo) ---
+        self.input_stack = QStackedWidget()
 
-        row1 = QHBoxLayout()
-        self.video_path_edit = QLineEdit()
-        self.video_path_edit.setPlaceholderText("Ruta del video...")
-        self.video_path_edit.textChanged.connect(self._on_video_path_changed)
-        row1.addWidget(self.video_path_edit, 1)
+        # Panel 1: Video File
+        self.input_video_panel = self._create_video_input_panel()
+        self.input_stack.addWidget(self.input_video_panel)
 
-        browse_btn = QPushButton("📁")
-        browse_btn.setFixedWidth(40)
-        browse_btn.clicked.connect(self._browse_video)
-        row1.addWidget(browse_btn)
-        input_layout.addLayout(row1)
+        # Panel 2: Live Camera
+        self.input_live_panel = self._create_live_input_panel()
+        self.input_stack.addWidget(self.input_live_panel)
 
-        self.video_info_label = QLabel("Sin video seleccionado")
-        self.video_info_label.setStyleSheet(
-            "color: rgba(255,255,255,0.5); font-size: 11px;"
-        )
-        self.video_info_label.setWordWrap(True)
-        input_layout.addWidget(self.video_info_label)
+        left_layout.addWidget(self.input_stack)
 
-        left_layout.addWidget(input_group)
-
-        # Tracker
+        # --- CONFIG TRACKER (común) ---
         tracker_group = QGroupBox("⚙️ Configuración del Tracker")
         tracker_layout = QGridLayout(tracker_group)
         tracker_layout.setVerticalSpacing(8)
@@ -335,7 +391,9 @@ class MotionCaptureDialog(QDialog):
         self.mp_complexity_combo.setCurrentIndex(1)
         tracker_layout.addWidget(self.mp_complexity_combo, 2, 1)
 
-        tracker_layout.addWidget(QLabel("Frame skip:"), 3, 0)
+        # Frame skip solo aplica a modo Video
+        self.frame_skip_label = QLabel("Frame skip:")
+        tracker_layout.addWidget(self.frame_skip_label, 3, 0)
         self.frame_skip_spin = QSpinBox()
         self.frame_skip_spin.setRange(1, 10)
         self.frame_skip_spin.setValue(1)
@@ -346,7 +404,8 @@ class MotionCaptureDialog(QDialog):
         )
         tracker_layout.addWidget(self.frame_skip_spin, 3, 1)
 
-        tracker_layout.addWidget(QLabel("Máx. frames:"), 4, 0)
+        self.max_frames_label = QLabel("Máx. frames:")
+        tracker_layout.addWidget(self.max_frames_label, 4, 0)
         self.max_frames_spin = QSpinBox()
         self.max_frames_spin.setRange(0, 100000)
         self.max_frames_spin.setValue(0)
@@ -355,15 +414,15 @@ class MotionCaptureDialog(QDialog):
 
         left_layout.addWidget(tracker_group)
 
-        # Output
-        output_group = QGroupBox("💾 Exportación")
-        output_layout = QGridLayout(output_group)
+        # --- OUTPUT (solo modo Video) ---
+        self.output_group = QGroupBox("💾 Exportación")
+        output_layout = QGridLayout(self.output_group)
         output_layout.setVerticalSpacing(8)
         output_layout.setHorizontalSpacing(12)
 
         output_layout.addWidget(QLabel("Formato:"), 0, 0)
         self.format_combo = QComboBox()
-        self.format_combo.addItems(["JSON", "CSV"])
+        self.format_combo.addItems(["JSON", "CSV", "BVH"])
         self.format_combo.currentTextChanged.connect(self._on_format_changed)
         output_layout.addWidget(self.format_combo, 0, 1)
 
@@ -384,7 +443,7 @@ class MotionCaptureDialog(QDialog):
         self.open_output_check.setChecked(True)
         output_layout.addWidget(self.open_output_check, 2, 0, 1, 2)
 
-        left_layout.addWidget(output_group)
+        left_layout.addWidget(self.output_group)
 
         left_layout.addStretch()
 
@@ -406,7 +465,7 @@ class MotionCaptureDialog(QDialog):
 
         self.preview_frame = QFrame()
         self.preview_frame.setObjectName("preview_frame")
-        self.preview_frame.setMinimumHeight(380)
+        self.preview_frame.setMinimumHeight(400)
         self.preview_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         pf_layout = QVBoxLayout(self.preview_frame)
@@ -418,7 +477,7 @@ class MotionCaptureDialog(QDialog):
         self.preview_label.setStyleSheet(
             "color: rgba(255,255,255,0.4); font-size: 13px; background: transparent;"
         )
-        self.preview_label.setText("📼\nCarga un video para previsualizar")
+        self.preview_label.setText("📼\nSelecciona un modo para empezar")
         pf_layout.addWidget(self.preview_label)
 
         preview_layout.addWidget(self.preview_frame, 1)
@@ -434,18 +493,18 @@ class MotionCaptureDialog(QDialog):
 
         splitter.addWidget(right)
 
-        splitter.setSizes([400, 700])
+        splitter.setSizes([420, 730])
         main_layout.addWidget(splitter, 1)
 
         # === Barra de acciones ===
         actions = QHBoxLayout()
 
-        self.process_btn = QPushButton("▶ Procesar")
-        self.process_btn.setProperty("type", "primary")
-        self.process_btn.setMinimumHeight(40)
-        self.process_btn.setMinimumWidth(160)
-        self.process_btn.clicked.connect(self._on_process_clicked)
-        actions.addWidget(self.process_btn)
+        self.start_btn = QPushButton("▶ Procesar")
+        self.start_btn.setProperty("type", "primary")
+        self.start_btn.setMinimumHeight(40)
+        self.start_btn.setMinimumWidth(160)
+        self.start_btn.clicked.connect(self._on_start_clicked)
+        actions.addWidget(self.start_btn)
 
         self.stop_btn = QPushButton("⏹ Detener")
         self.stop_btn.setProperty("type", "danger")
@@ -464,23 +523,31 @@ class MotionCaptureDialog(QDialog):
 
         main_layout.addLayout(actions)
 
-        # === Progreso ===
-        progress_row = QHBoxLayout()
+        # === Barra de estado ===
+        status_row = QHBoxLayout()
+
+        self.status_label = QLabel("Listo")
+        self.status_label.setStyleSheet(
+            "color: rgba(255,255,255,0.7); font-size: 12px;"
+        )
+        status_row.addWidget(self.status_label, 1)
+
+        # Info de estado (solo live)
+        self.live_status_label = QLabel("")
+        self.live_status_label.setStyleSheet(
+            "color: #4da0c4; font-size: 11px; font-weight: bold;"
+        )
+        status_row.addWidget(self.live_status_label)
+
+        main_layout.addLayout(status_row)
+
+        # === Progreso (solo video) ===
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat("%p%")
         self.progress_bar.setMinimumHeight(20)
-        progress_row.addWidget(self.progress_bar, 1)
-
-        self.progress_label = QLabel("Listo")
-        self.progress_label.setMinimumWidth(200)
-        self.progress_label.setStyleSheet(
-            "color: rgba(255,255,255,0.7); font-size: 11px;"
-        )
-        progress_row.addWidget(self.progress_label)
-
-        main_layout.addLayout(progress_row)
+        main_layout.addWidget(self.progress_bar)
 
         # === Log ===
         log_group = QGroupBox("📋 Log")
@@ -488,20 +555,175 @@ class MotionCaptureDialog(QDialog):
 
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setMaximumHeight(120)
-        self.log_text.setPlaceholderText("Los mensajes de procesamiento aparecerán aquí...")
+        self.log_text.setMaximumHeight(130)
+        self.log_text.setPlaceholderText("Los mensajes aparecerán aquí...")
         log_layout.addWidget(self.log_text)
 
         main_layout.addWidget(log_group)
 
-    def _connect_signals(self):
-        """Conecta señales internas."""
-        pass
+    # ==================== PANELES DE INPUT ====================
+
+    def _create_video_input_panel(self) -> QWidget:
+        """Panel de input para modo Video File."""
+        panel = QGroupBox("📁 Video de Entrada")
+        layout = QVBoxLayout(panel)
+
+        row1 = QHBoxLayout()
+        self.video_path_edit = QLineEdit()
+        self.video_path_edit.setPlaceholderText("Ruta del video...")
+        self.video_path_edit.textChanged.connect(self._on_video_path_changed)
+        row1.addWidget(self.video_path_edit, 1)
+
+        browse_btn = QPushButton("📁")
+        browse_btn.setFixedWidth(40)
+        browse_btn.clicked.connect(self._browse_video)
+        row1.addWidget(browse_btn)
+        layout.addLayout(row1)
+
+        self.video_info_label = QLabel("Sin video seleccionado")
+        self.video_info_label.setStyleSheet(
+            "color: rgba(255,255,255,0.5); font-size: 11px;"
+        )
+        self.video_info_label.setWordWrap(True)
+        layout.addWidget(self.video_info_label)
+
+        return panel
+
+    def _create_live_input_panel(self) -> QWidget:
+        """Panel de input para modo Live Camera."""
+        panel = QGroupBox("📡 Live Camera → Blender")
+        layout = QGridLayout(panel)
+        layout.setVerticalSpacing(8)
+        layout.setHorizontalSpacing(12)
+
+        # Host
+        layout.addWidget(QLabel("Host:"), 0, 0)
+        self.live_host_edit = QLineEdit()
+        self.live_host_edit.setText("127.0.0.1")
+        self.live_host_edit.setToolTip(
+            "Dirección donde escucha Blender.\n"
+            "127.0.0.1 = misma máquina\n"
+            "IP local = Blender en otra PC de la red"
+        )
+        layout.addWidget(self.live_host_edit, 0, 1)
+
+        # Puerto
+        layout.addWidget(QLabel("Puerto:"), 1, 0)
+        self.live_port_spin = QSpinBox()
+        self.live_port_spin.setRange(1024, 65535)
+        self.live_port_spin.setValue(9999)
+        layout.addWidget(self.live_port_spin, 1, 1)
+
+        # FPS objetivo
+        layout.addWidget(QLabel("FPS objetivo:"), 2, 0)
+        self.live_fps_spin = QSpinBox()
+        self.live_fps_spin.setRange(1, 60)
+        self.live_fps_spin.setValue(15)
+        self.live_fps_spin.setToolTip(
+            "FPS de procesamiento y envío.\n"
+            "En PC modestos: 10-15 fps.\n"
+            "En PC potentes: 20-30 fps."
+        )
+        layout.addWidget(self.live_fps_spin, 2, 1)
+
+        # Cámara (0 = todas, N = solo esa)
+        layout.addWidget(QLabel("Cámara:"), 3, 0)
+        self.live_camera_combo = QComboBox()
+        self.live_camera_combo.addItem("Todas las cámaras", -1)
+        layout.addWidget(self.live_camera_combo, 3, 1)
+
+        # Botón para refrescar cámaras
+        refresh_btn = QPushButton("🔄 Refrescar cámaras")
+        refresh_btn.setFixedHeight(28)
+        refresh_btn.clicked.connect(self._refresh_live_cameras)
+        layout.addWidget(refresh_btn, 4, 0, 1, 2)
+
+        # Info
+        info = QLabel(
+            "💡 Blender debe tener instalado el addon 'CamCap Bridge'\n"
+            "   y estar escuchando en este host:puerto."
+        )
+        info.setStyleSheet(
+            "color: rgba(255,255,255,0.5); font-size: 11px;"
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info, 5, 0, 1, 2)
+
+        return panel
+
+    # ==================== CAMBIO DE MODO ====================
+
+    def _on_mode_changed(self):
+        """Cuando cambia el modo Video/Live."""
+        if self.mode_video_radio.isChecked():
+            self._mode = self.MODE_VIDEO
+        else:
+            self._mode = self.MODE_LIVE
+
+        self._update_mode_ui()
+
+    def _update_mode_ui(self):
+        """Actualiza la UI según el modo activo."""
+        is_video = self._mode == self.MODE_VIDEO
+
+        # Stack de input
+        self.input_stack.setCurrentIndex(0 if is_video else 1)
+
+        # Botón de salida solo en video
+        self.output_group.setVisible(is_video)
+        self.progress_bar.setVisible(is_video)
+        self.open_folder_btn.setVisible(is_video)
+
+        # Frame skip / max frames solo en video
+        self.frame_skip_label.setVisible(is_video)
+        self.frame_skip_spin.setVisible(is_video)
+        self.max_frames_label.setVisible(is_video)
+        self.max_frames_spin.setVisible(is_video)
+
+        # Botón de start cambia según modo
+        if is_video:
+            self.start_btn.setText("▶ Procesar")
+            self.start_btn.setProperty("type", "primary")
+            self.mode_info_label.setText(
+                "Procesa un archivo de video y exporta JSON/CSV/BVH"
+            )
+            self.preview_label.setText(
+                "📼\nCarga un video para previsualizar"
+            )
+        else:
+            self.start_btn.setText("📡 Iniciar Live")
+            self.start_btn.setProperty("type", "live")
+            self.mode_info_label.setText(
+                "Procesa frames en vivo y los envía a Blender por socket"
+            )
+            self.preview_label.setText(
+                "📡\nEsperando frames de las cámaras..."
+            )
+            self._refresh_live_cameras()
+
+        # Forzar refresh de estilos
+        self.start_btn.style().unpolish(self.start_btn)
+        self.start_btn.style().polish(self.start_btn)
+
+    def _refresh_live_cameras(self):
+        """Rellena el combo de cámaras con las cámaras activas."""
+        try:
+            self.live_camera_combo.clear()
+            self.live_camera_combo.addItem("Todas las cámaras", -1)
+
+            from core.settings_manager import settings_manager
+            cameras = settings_manager.get_cameras()
+            for cam in cameras:
+                self.live_camera_combo.addItem(
+                    f"{cam.name} (ID {cam.id})", cam.id
+                )
+        except Exception as e:
+            logger.debug(f"Error refrescando cámaras: {e}")
 
     # ==================== CONFIG ====================
 
     def _load_plugin_config(self):
-        """Carga la config guardada del plugin (si existe)."""
+        """Carga la config guardada del plugin."""
         try:
             if self._plugin.context.settings is not None:
                 cfg = self._plugin.context.settings.get_plugin_config(self._plugin.NAME)
@@ -516,11 +738,19 @@ class MotionCaptureDialog(QDialog):
                     self.frame_skip_spin.setValue(cfg.get("frame_skip", 1))
                     self.max_frames_spin.setValue(cfg.get("max_frames", 0))
                     self.format_combo.setCurrentText(cfg.get("format", "JSON"))
+                    # Live
+                    self.live_host_edit.setText(cfg.get("live_host", "127.0.0.1"))
+                    self.live_port_spin.setValue(cfg.get("live_port", 9999))
+                    self.live_fps_spin.setValue(cfg.get("live_fps", 15))
+                    # Modo
+                    mode = cfg.get("mode", "video")
+                    if mode == "live":
+                        self.mode_live_radio.setChecked(True)
         except Exception as e:
             logger.debug(f"No se pudo cargar config: {e}")
 
     def _save_plugin_config(self):
-        """Guarda la config actual del diálogo."""
+        """Guarda la config actual."""
         try:
             if self._plugin.context.settings is not None:
                 cfg = {
@@ -530,6 +760,10 @@ class MotionCaptureDialog(QDialog):
                     "frame_skip": self.frame_skip_spin.value(),
                     "max_frames": self.max_frames_spin.value(),
                     "format": self.format_combo.currentText(),
+                    "live_host": self.live_host_edit.text().strip(),
+                    "live_port": self.live_port_spin.value(),
+                    "live_fps": self.live_fps_spin.value(),
+                    "mode": self._mode,
                 }
                 self._plugin.context.settings.set_plugin_config(
                     self._plugin.NAME, cfg
@@ -549,7 +783,6 @@ class MotionCaptureDialog(QDialog):
             self.video_path_edit.setText(path)
 
     def _on_video_path_changed(self, path: str):
-        """Cuando cambia la ruta del video, actualiza info y autogenera salida."""
         self._video_path = path.strip()
 
         if not self._video_path or not os.path.isfile(self._video_path):
@@ -557,7 +790,6 @@ class MotionCaptureDialog(QDialog):
             self.preview_label.setText("📼\nCarga un video para previsualizar")
             return
 
-        # Info del video
         try:
             import cv2
             cap = cv2.VideoCapture(self._video_path)
@@ -575,10 +807,7 @@ class MotionCaptureDialog(QDialog):
                     f"💾 {format_size(size)}"
                 )
                 self.video_info_label.setText(info)
-                self._log(f"Video cargado: {os.path.basename(self._video_path)}")
-                self._log(f"  {info}")
 
-                # Mostrar primer frame como preview
                 ret, frame = cap.read()
                 if ret:
                     self._show_preview_frame(frame, [])
@@ -588,7 +817,6 @@ class MotionCaptureDialog(QDialog):
         except Exception as e:
             self.video_info_label.setText(f"⚠️ Error: {e}")
 
-        # Autogenerar salida
         base = os.path.splitext(self._video_path)[0]
         fmt = self.format_combo.currentText().lower()
         default_output = f"{base}_mocap.{fmt}"
@@ -596,7 +824,6 @@ class MotionCaptureDialog(QDialog):
         self._output_path = default_output
 
     def _on_format_changed(self, fmt: str):
-        """Cuando cambia el formato, actualiza la extensión del archivo de salida."""
         if not self.output_path_edit.text().strip():
             return
         current = self.output_path_edit.text().strip()
@@ -622,44 +849,32 @@ class MotionCaptureDialog(QDialog):
     # ==================== PREVIEW ====================
 
     def _show_preview_frame(self, frame_bgr, persons):
-        """
-        Muestra un frame con bounding boxes y landmarks dibujados.
-
-        Args:
-            frame_bgr: np.ndarray BGR
-            persons: List[PersonDetection] (opcional)
-        """
+        """Muestra un frame con landmarks dibujados."""
         try:
             import cv2
             import numpy as np
 
-            # Copia para dibujar
             vis = frame_bgr.copy()
 
             if self._preview_enabled and persons:
                 for person in persons:
-                    # Bounding box
                     x, y, w, h = person.bbox
                     cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
-                    # Track ID
                     label = f"ID {person.track_id}  {person.confidence:.2f}"
                     cv2.putText(
                         vis, label, (x, max(20, y - 8)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1,
                     )
 
-                    # Landmarks
                     if person.landmarks:
                         self._draw_landmarks(vis, person.landmarks, x, y, w, h)
 
-            # Convertir BGR → RGB → QImage
             rgb = cv2.cvtColor(vis, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb.shape
             bytes_per_line = ch * w
             qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
 
-            # Escalar al tamaño del label
             pixmap = QPixmap.fromImage(qimg)
             label_size = self.preview_label.size()
             if label_size.width() > 10 and label_size.height() > 10:
@@ -681,11 +896,10 @@ class MotionCaptureDialog(QDialog):
             logger.debug(f"Error mostrando preview: {e}")
 
     def _draw_landmarks(self, vis, landmarks, bbox_x, bbox_y, bbox_w, bbox_h):
-        """Dibuja los 33 landmarks de MediaPipe sobre el frame."""
+        """Dibuja los 33 landmarks de MediaPipe."""
         try:
             import cv2
 
-            # Conexiones estándar de MediaPipe Pose (33 landmarks)
             CONNECTIONS = [
                 (0, 1), (1, 2), (2, 3), (3, 7),
                 (0, 4), (4, 5), (5, 6), (6, 8),
@@ -697,17 +911,13 @@ class MotionCaptureDialog(QDialog):
                 (24, 26), (26, 28), (28, 30), (30, 32),
             ]
 
-            # Puntos (landmarks normalizados al bbox)
             points = []
             for lm in landmarks:
                 nx, ny, _, vis_ = lm
-                # Los landmarks están normalizados al crop; los convertimos al frame
-                # Como crop = bbox + padding, aproximamos así:
                 px = int(bbox_x + nx * bbox_w)
                 py = int(bbox_y + ny * bbox_h)
                 points.append((px, py, vis_))
 
-            # Dibujar conexiones
             for a, b in CONNECTIONS:
                 if a < len(points) and b < len(points):
                     pa = points[a]
@@ -716,17 +926,32 @@ class MotionCaptureDialog(QDialog):
                         cv2.line(vis, (pa[0], pa[1]), (pb[0], pb[1]),
                                  (0, 255, 255), 2)
 
-            # Dibujar puntos
             for px, py, vis_ in points:
                 if vis_ > 0.3:
                     cv2.circle(vis, (px, py), 3, (255, 0, 255), -1)
         except Exception as e:
             logger.debug(f"Error dibujando landmarks: {e}")
 
-    # ==================== PROCESAMIENTO ====================
+    # ==================== ACCIÓN PRINCIPAL ====================
 
-    def _on_process_clicked(self):
-        """Valida y arranca el procesamiento."""
+    def _on_start_clicked(self):
+        """Arranca según el modo activo."""
+        if self._mode == self.MODE_VIDEO:
+            self._on_process_video_clicked()
+        else:
+            self._on_start_live_clicked()
+
+    def _on_stop_clicked(self):
+        """Detiene según el modo activo."""
+        if self._mode == self.MODE_VIDEO:
+            self._on_stop_video_clicked()
+        else:
+            self._on_stop_live_clicked()
+
+    # ==================== MODO VIDEO ====================
+
+    def _on_process_video_clicked(self):
+        """Valida y arranca el procesamiento de video."""
         video_path = self.video_path_edit.text().strip()
         output_path = self.output_path_edit.text().strip()
 
@@ -740,7 +965,6 @@ class MotionCaptureDialog(QDialog):
             QMessageBox.warning(self, "Error", "Selecciona una ruta de salida")
             return
 
-        # Verificar que el plugin tenga el tracker cargado
         if self._plugin._tracker is None:
             QMessageBox.warning(
                 self, "Error",
@@ -751,7 +975,6 @@ class MotionCaptureDialog(QDialog):
             )
             return
 
-        # Config final
         config = {
             "video_path": video_path,
             "output_path": output_path,
@@ -763,59 +986,54 @@ class MotionCaptureDialog(QDialog):
             "max_frames": self.max_frames_spin.value(),
         }
 
-        # Guardar config
         self._save_plugin_config()
 
         self._is_processing = True
         self._output_path = output_path
-        self.process_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.open_folder_btn.setEnabled(False)
         self.progress_bar.setValue(0)
-        self.progress_label.setText("Iniciando...")
-        self._log(f"▶ Iniciando procesamiento: {os.path.basename(video_path)}")
+        self.status_label.setText("Iniciando procesamiento...")
+        self._log(f"▶ Procesando: {os.path.basename(video_path)}")
         self._log(f"   YOLO: {config['yolo_model']} (conf={config['yolo_conf']})")
         self._log(f"   MediaPipe complexity: {config['mp_complexity']}")
         self._log(f"   Frame skip: {config['frame_skip']}")
         self._log(f"   Salida: {output_path}")
 
-        # Crear worker y thread
         self._worker = ProcessingWorker(self._plugin, config)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_processing_finished)
-        self._worker.log_message.connect(self._log)
 
         self._worker_thread = QThread()
         self._worker.moveToThread(self._worker_thread)
         self._worker_thread.started.connect(self._worker.run)
         self._worker_thread.start()
 
-    def _on_stop_clicked(self):
-        """Solicita detener el procesamiento."""
+    def _on_stop_video_clicked(self):
+        """Solicita detener el procesamiento de video."""
         if not self._is_processing:
             return
         self._log("⏹ Detención solicitada...")
-        self.progress_label.setText("Deteniendo...")
+        self.status_label.setText("Deteniendo...")
         self._plugin.stop_processing()
 
     def _on_progress(self, current: int, total: int, fps: float, eta: float):
-        """Actualiza la barra de progreso."""
         if total <= 0:
             return
         percent = int((current / total) * 100)
         self.progress_bar.setValue(percent)
-        self.progress_label.setText(
+        self.status_label.setText(
             f"Frame {current}/{total}  •  {fps:.1f} fps  •  "
             f"ETA {format_time(eta)}"
         )
 
     def _on_processing_finished(self, error: str):
-        """Cuando el procesamiento termina (con o sin error)."""
+        """Cuando termina el procesamiento de video."""
         self._is_processing = False
-        self.process_btn.setEnabled(True)
+        self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
 
-        # Detener thread
         if self._worker_thread is not None:
             self._worker_thread.quit()
             self._worker_thread.wait(2000)
@@ -824,11 +1042,11 @@ class MotionCaptureDialog(QDialog):
 
         if error:
             self._log(f"❌ Error: {error}")
-            self.progress_label.setText(f"❌ Error")
+            self.status_label.setText(f"❌ Error")
             QMessageBox.critical(self, "Error", error)
         else:
             self.progress_bar.setValue(100)
-            self.progress_label.setText("✅ Completado")
+            self.status_label.setText("✅ Completado")
             self._log(f"✅ Procesamiento completado")
             self._log(f"   Archivo: {self._output_path}")
             self.open_folder_btn.setEnabled(True)
@@ -840,6 +1058,156 @@ class MotionCaptureDialog(QDialog):
                 self, "Éxito",
                 f"Captura exportada a:\n{self._output_path}"
             )
+
+    # ==================== MODO LIVE ====================
+
+    def _on_start_live_clicked(self):
+        """Arranca el modo Live usando el plugin."""
+        if self._plugin._tracker is None:
+            QMessageBox.warning(
+                self, "Error",
+                "El tracker no está cargado.\n\n"
+                "Instala las dependencias:\n"
+                "  pip install ultralytics mediapipe opencv-python\n\n"
+                "Luego reinicia la aplicación."
+            )
+            return
+
+        host = self.live_host_edit.text().strip() or "127.0.0.1"
+        port = self.live_port_spin.value()
+        target_fps = self.live_fps_spin.value()
+        camera_id = self.live_camera_combo.currentData()
+        if camera_id is not None and camera_id < 0:
+            camera_id = None
+
+        self._save_plugin_config()
+
+        # Arrancar usando el plugin
+        ok = self._plugin.start_live(
+            host=host,
+            port=port,
+            target_fps=target_fps,
+            camera_id=camera_id,
+            on_client_connected=self._on_client_connected,
+            on_client_disconnected=self._on_client_disconnected,
+        )
+
+        if not ok:
+            QMessageBox.critical(
+                self, "Error",
+                f"No se pudo arrancar el Live en {host}:{port}\n\n"
+                f"Verifica que el puerto esté libre."
+            )
+            return
+
+        # Actualizar UI
+        self._is_live = True
+        self.start_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
+        self.status_label.setText(
+            f"📡 Live activo en {host}:{port} — esperando cliente..."
+        )
+        self._log(f"📡 Live iniciado")
+        self._log(f"   Servidor: {host}:{port}")
+        self._log(f"   FPS objetivo: {target_fps}")
+        if camera_id is not None:
+            self._log(f"   Cámara: {self.live_camera_combo.currentText()}")
+        else:
+            self._log(f"   Cámara: Todas")
+
+        # Timer para actualizar stats
+        timer_manager.create(
+            self._live_status_timer_name,
+            1000,
+            self._update_live_status,
+            start=True,
+        )
+
+    def _on_stop_live_clicked(self):
+        """Detiene el modo Live usando el plugin."""
+        if not self._is_live:
+            return
+
+        self._log("⏹ Deteniendo Live...")
+        self.status_label.setText("Deteniendo...")
+
+        try:
+            self._plugin.stop_live()
+        except Exception as e:
+            logger.debug(f"Error deteniendo live: {e}")
+
+        try:
+            timer_manager.stop(self._live_status_timer_name)
+        except Exception:
+            pass
+
+        self._is_live = False
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
+        self.status_label.setText("Listo")
+        self.live_status_label.setText("")
+        self._log("✅ Live detenido")
+
+    def _update_live_status(self):
+        """Actualiza el label de stats en vivo usando el plugin."""
+        if not self._is_live:
+            return
+
+        try:
+            stats = self._plugin.get_live_stats()
+        except Exception:
+            return
+
+        parts = []
+
+        if stats.get("client_connected"):
+            addr = stats.get("client_address")
+            if addr:
+                parts.append(f"🔗 {addr[0]}:{addr[1]}")
+            else:
+                parts.append("🔗 Cliente conectado")
+        else:
+            parts.append("⏸ Sin cliente")
+
+        fps = stats.get("effective_fps", 0.0)
+        frames = stats.get("frames_processed", 0)
+        sent = stats.get("frames_sent", 0)
+        skipped = stats.get("frames_skipped", 0)
+
+        parts.append(f"⚡ {fps:.1f} fps")
+        parts.append(f"📤 {sent} enviados")
+        if skipped > 0:
+            parts.append(f"⏭ {skipped} saltados")
+
+        self.live_status_label.setText("  •  ".join(parts))
+
+    def _on_client_connected(self, address):
+        """Callback cuando Blender se conecta."""
+        try:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self._log(
+                f"🔗 Cliente conectado desde {address}"
+            ))
+            QTimer.singleShot(0, lambda: self.status_label.setText(
+                f"🔗 Cliente conectado desde {address}"
+            ))
+        except Exception as e:
+            logger.debug(f"Error en callback connect: {e}")
+
+    def _on_client_disconnected(self, address):
+        """Callback cuando Blender se desconecta."""
+        try:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(0, lambda: self._log(
+                f"🔌 Cliente desconectado: {address}"
+            ))
+            QTimer.singleShot(0, lambda: self.status_label.setText(
+                "📡 Esperando cliente..."
+            ))
+        except Exception as e:
+            logger.debug(f"Error en callback disconnect: {e}")
+
+    # ==================== ACCIONES COMUNES ====================
 
     def _open_output_folder(self):
         """Abre la carpeta del archivo de salida."""
@@ -861,8 +1229,6 @@ class MotionCaptureDialog(QDialog):
         except Exception as e:
             logger.debug(f"Error abriendo carpeta: {e}")
 
-    # ==================== UTILIDADES ====================
-
     def _log(self, msg: str):
         """Añade un mensaje al log."""
         timestamp = time.strftime("%H:%M:%S")
@@ -872,27 +1238,42 @@ class MotionCaptureDialog(QDialog):
     def _show_help(self):
         QMessageBox.information(
             self, "🎬 Motion Capture Studio — Ayuda",
-            "Este diálogo te permite:\n\n"
-            "1. Cargar un fragmento de video\n"
-            "2. Configurar el tracker híbrido (YOLO + MediaPipe)\n"
-            "3. Procesar el video para extraer landmarks\n"
-            "4. Exportar a JSON o CSV\n\n"
-            "Flujo:\n"
-            "  Video → YOLO detecta personas → MediaPipe extrae 33\n"
-            "  landmarks por persona → exportación.\n\n"
+            "El Studio tiene DOS modos:\n\n"
+            "📁 Video File:\n"
+            "   Procesa un archivo de video y exporta JSON/CSV/BVH.\n"
+            "   Útil para analizar grabaciones pasadas.\n\n"
+            "📡 Live Camera:\n"
+            "   Procesa frames en vivo desde las cámaras de CamCap\n"
+            "   y los envía a Blender por socket en tiempo real.\n"
+            "   Requiere el addon 'CamCap Bridge' en Blender.\n\n"
+            "Flujo del pipeline:\n"
+            "   Frame → YOLO detecta personas → MediaPipe extrae 33\n"
+            "   landmarks → exportar o enviar por socket.\n\n"
             "Recomendaciones:\n"
-            "  • Para PC de bajos recursos: usa 'yolov8n-pose.pt' y\n"
-            "    'Lite' en MediaPipe. Aumenta 'Frame skip' a 2-3.\n"
-            "  • Para máxima precisión: usa 'yolov8m-pose.pt' y 'Heavy'.\n\n"
-            "Formatos de video: .mp4, .mkv, .avi, .mov, .webm.\n"
-            "Los modelos YOLO y MediaPipe se descargan la primera vez\n"
-            "que se usan (requiere internet)."
+            "   • PC de bajos recursos: 'yolov8n-pose.pt' + 'Lite' + fps 10.\n"
+            "   • PC potente: 'yolov8s-pose.pt' + 'Full' + fps 20-30.\n\n"
+            "El addon de Blender 'CamCap Bridge' está en:\n"
+            "   plugins/motion_capture_export/blender_addon/"
         )
 
     # ==================== CIERRE ====================
 
     def closeEvent(self, event):
-        """Al cerrar, detener cualquier procesamiento en curso."""
+        """Al cerrar, detener todo."""
+        # Detener live si está activo
+        if self._is_live:
+            reply = QMessageBox.question(
+                self, "Confirmar",
+                "El modo Live está activo.\n¿Detenerlo y cerrar?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                event.ignore()
+                return
+            self._on_stop_live_clicked()
+
+        # Detener procesamiento de video
         if self._is_processing:
             reply = QMessageBox.question(
                 self, "Confirmar",

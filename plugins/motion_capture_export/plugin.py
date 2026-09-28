@@ -1,13 +1,14 @@
 """
 Plugin: Motion Capture Export.
 
-Registra:
-  - ConfigTab (para la UI de configuración)
-  - Métodos públicos para arrancar/detener procesamiento
-
 Modos:
-  - Video File: procesa un fragmento de video y exporta animación.
-  - Camera Live: (Fase 3) procesa en tiempo real desde cámaras.
+  - Video File: procesa un archivo y exporta JSON/CSV/BVH.
+  - Live Camera: procesa frames en vivo desde las cámaras de CamCap
+    y los envía a Blender por socket TCP en tiempo real.
+
+Registra:
+  - ConfigTab (botón para abrir el Studio)
+  - Métodos públicos para arrancar/detener procesamiento
 
 El plugin NO conoce el Core internamente. Se engancha vía extensiones
 y eventos genéricos.
@@ -22,11 +23,11 @@ logger = get_logger("Plugin.MotionCaptureExport")
 
 
 class MotionCaptureExportPlugin(BasePlugin):
-    """Plugin de captura de movimiento desde video."""
+    """Plugin de captura de movimiento desde video y cámara en vivo."""
 
     NAME = "motion_capture_export"
     VERSION = "1.0.0"
-    DESCRIPTION = "Captura de movimiento desde video (YOLO+MediaPipe) para Blender"
+    DESCRIPTION = "Captura de movimiento (YOLO+MediaPipe) para Blender"
     AUTHOR = "ProCamera"
     DEPENDENCIES = []
     REQUIRES_DEBUG = False
@@ -36,19 +37,21 @@ class MotionCaptureExportPlugin(BasePlugin):
         self._tab_provider = None
         self._tracker = None
         self._processor = None
+        self._socket_server = None
+        self._live_capture = None
         self._current_config: Dict[str, Any] = {}
 
     # ==================== CICLO DE VIDA ====================
 
     def on_load(self) -> bool:
-        """Carga modelos. Si falla, el plugin no se activa pero el Core sigue."""
+        """Carga modelos YOLO + MediaPipe."""
         try:
             from plugins.motion_capture_export.pose_tracker import HybridPoseTracker
             self._tracker = HybridPoseTracker()
             if not self._tracker.load():
                 logger.warning(
                     "⚠️ No se pudieron cargar los modelos. "
-                    "Instala: pip install ultralytics mediapipe"
+                    "Instala: pip install ultralytics mediapipe opencv-python"
                 )
                 self._tracker = None
                 return False
@@ -85,8 +88,9 @@ class MotionCaptureExportPlugin(BasePlugin):
             return False
 
     def on_disable(self):
-        """Detiene cualquier procesamiento en curso."""
+        """Detiene procesamiento y live capture."""
         self.stop_processing()
+        self.stop_live()
 
         if self._tab_provider is not None:
             try:
@@ -102,18 +106,21 @@ class MotionCaptureExportPlugin(BasePlugin):
         logger.info("⏸️ MotionCaptureExport desactivado")
 
     def on_unload(self):
-        """Libera modelos."""
+        """Libera recursos."""
         self.stop_processing()
+        self.stop_live()
+
         if self._tracker is not None:
             try:
                 self._tracker.release()
             except Exception:
                 pass
             self._tracker = None
+
         self._tab_provider = None
         logger.info("🔌 MotionCaptureExport descargado")
 
-    # ==================== API PÚBLICA ====================
+    # ==================== MODO VIDEO (BATCH) ====================
 
     def start_processing(
         self,
@@ -122,7 +129,7 @@ class MotionCaptureExportPlugin(BasePlugin):
         on_done: Optional[Callable] = None,
     ) -> bool:
         """
-        Inicia el procesamiento de un video.
+        Inicia el procesamiento de un video (modo batch).
 
         Args:
             config: dict con video_path, output_path, output_format, etc.
@@ -152,8 +159,6 @@ class MotionCaptureExportPlugin(BasePlugin):
             frame_skip = config.get("frame_skip", 1)
             max_frames = config.get("max_frames", 0)
 
-            # Configurar tracker con los parámetros del config
-            # (en Fase 1 reutilizamos el tracker ya cargado)
             self._processor = VideoProcessor(
                 video_path=video_path,
                 tracker=self._tracker,
@@ -161,10 +166,8 @@ class MotionCaptureExportPlugin(BasePlugin):
                 max_frames=max_frames,
             )
 
-            # Callback de resultados → exportar
             def _on_results(results):
                 exporter = get_exporter(output_format)
-                # Estimar fps de salida
                 fps = 30.0
                 if len(results) >= 2:
                     dt = results[-1].timestamp - results[0].timestamp
@@ -188,7 +191,7 @@ class MotionCaptureExportPlugin(BasePlugin):
             return False
 
     def stop_processing(self):
-        """Detiene el procesamiento en curso (si hay)."""
+        """Detiene el procesamiento en curso."""
         if self._processor is not None:
             try:
                 self._processor.stop()
@@ -196,5 +199,134 @@ class MotionCaptureExportPlugin(BasePlugin):
                 pass
 
     def is_processing(self) -> bool:
-        """Retorna True si hay un procesamiento en curso."""
+        """True si hay un procesamiento en curso."""
         return self._processor is not None and self._processor.is_running()
+
+    # ==================== MODO LIVE (STREAMING A BLENDER) ====================
+
+    def start_live(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 9999,
+        target_fps: int = 15,
+        camera_id: Optional[int] = None,
+        on_client_connected: Optional[Callable] = None,
+        on_client_disconnected: Optional[Callable] = None,
+    ) -> bool:
+        """
+        Inicia el modo Live: socket server + captura en vivo.
+
+        Args:
+            host: host donde escucha el socket.
+            port: puerto del socket.
+            target_fps: FPS objetivo de procesamiento (10-15 en CPU).
+            camera_id: si no es None, solo procesa esa cámara.
+            on_client_connected: callback cuando un cliente se conecta.
+            on_client_disconnected: callback cuando un cliente se desconecta.
+
+        Returns:
+            True si arrancó correctamente.
+        """
+        if self._tracker is None:
+            logger.error("❌ Tracker no disponible (modelos no cargados)")
+            return False
+
+        if self._live_capture is not None and self._live_capture._running:
+            logger.warning("⚠️ Live capture ya está activo")
+            return False
+
+        try:
+            from plugins.motion_capture_export.socket_server import SocketServer
+            from plugins.motion_capture_export.live_capture import LiveCapture
+
+            # 1. Crear y arrancar el socket server
+            self._socket_server = SocketServer(
+                host=host,
+                port=port,
+                on_client_connected=on_client_connected,
+                on_client_disconnected=on_client_disconnected,
+            )
+            if not self._socket_server.start():
+                logger.error(f"❌ No se pudo arrancar el servidor en {host}:{port}")
+                self._socket_server = None
+                return False
+
+            # 2. Crear y arrancar el live capture
+            self._live_capture = LiveCapture(
+                tracker=self._tracker,
+                socket_server=self._socket_server,
+                target_fps=target_fps,
+                camera_filter=camera_id,
+            )
+            if not self._live_capture.start():
+                logger.error("❌ No se pudo iniciar la captura en vivo")
+                self._socket_server.stop()
+                self._socket_server = None
+                self._live_capture = None
+                return False
+
+            logger.info(
+                f"📡 Live iniciado: {host}:{port}, fps={target_fps}, "
+                f"camera_filter={camera_id}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ Error iniciando live: {e}", exc_info=True)
+            self.stop_live()
+            return False
+
+    def stop_live(self):
+        """Detiene el modo Live (socket server + captura)."""
+        if self._live_capture is not None:
+            try:
+                self._live_capture.stop()
+            except Exception as e:
+                logger.debug(f"Error deteniendo live_capture: {e}")
+            self._live_capture = None
+
+        if self._socket_server is not None:
+            try:
+                self._socket_server.stop()
+            except Exception as e:
+                logger.debug(f"Error deteniendo socket_server: {e}")
+            self._socket_server = None
+
+        logger.info("📡 Live detenido")
+
+    def is_live_active(self) -> bool:
+        """True si el modo Live está activo."""
+        return (
+            self._live_capture is not None
+            and self._live_capture._running
+        )
+
+    def is_client_connected(self) -> bool:
+        """True si hay un cliente conectado al socket."""
+        if self._socket_server is None:
+            return False
+        return self._socket_server.is_client_connected()
+
+    def get_live_stats(self) -> Dict[str, Any]:
+        """Retorna stats del modo Live."""
+        stats: Dict[str, Any] = {
+            "active": self.is_live_active(),
+            "client_connected": self.is_client_connected(),
+        }
+
+        if self._live_capture is not None:
+            stats.update(self._live_capture.get_stats())
+
+        if self._socket_server is not None:
+            server_stats = self._socket_server.get_stats()
+            stats["frames_sent"] = server_stats.get("frames_sent", 0)
+            stats["send_errors"] = server_stats.get("send_errors", 0)
+            stats["client_address"] = server_stats.get("client_address")
+
+        return stats
+
+    # ==================== API PÚBLICA COMÚN ====================
+
+    def get_tracker(self):
+        """Retorna el tracker (para el diálogo)."""
+        return self._tracker

@@ -12,12 +12,14 @@ venv.bak/
 logs/
 
 # PyInstaller
-*.spec
+
 dist/
 build/
 debug_faces/
 detected/
 known_faces/
+models/
+*.pt
 *.bat
 *.sh
 *.zip

@@ -5,7 +5,7 @@
   "author": "ProCamera",
   "dependencies": [],
   "capabilities": ["read_files", "write_files", "process_execution"],
-  "enabled_by_default": false,
+  "enabled_by_default": true,
   "auto_load": true,
   "requires_debug": false
 }

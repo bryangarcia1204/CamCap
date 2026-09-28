@@ -1,0 +1,10 @@
+{
+    "version": "1.0.0",
+    "description": "Consola de logs en tiempo real (solo modo debug)",
+    "author": "ProCamera",
+    "dependencies": [],
+    "capabilities": ["ui_modify", "settings_read", "settings_write"],
+    "enabled_by_default": false,
+    "auto_load": true,
+    "requires_debug": true
+}

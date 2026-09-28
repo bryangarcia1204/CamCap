@@ -63,7 +63,7 @@ class _FlashUIExtension:
         return 100
 
     def get_widgets(self, context: dict):
-        from plugins.camera_controls.widgets import create_flash_widgets
+        from .widgets import create_flash_widgets
 
         camera = context.get("camera")
         camera_widget = context.get("widget")

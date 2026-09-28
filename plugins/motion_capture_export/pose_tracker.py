@@ -20,6 +20,9 @@ Referencias:
 import os
 import time
 import numpy as np
+import mediapipe as mp
+from mediapipe.tasks import python
+from mediapipe.tasks.python import vision
 from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass, field
 
@@ -146,7 +149,7 @@ class HybridPoseTracker:
 
     def __init__(
         self,
-        yolo_model: str = "yolov8n-pose.pt",
+        yolo_model: str = "plugins/motion_capture_export/models/yolov8n-pose.pt",
         yolo_conf: float = 0.4,
         mp_complexity: int = 1,
         mp_detection_conf: float = 0.5,
@@ -187,33 +190,44 @@ class HybridPoseTracker:
     # ==================== CARGA ====================
 
     def load(self) -> bool:
-        """Carga los modelos YOLO y MediaPipe."""
+        """Carga los modelos YOLO y MediaPipe Tasks."""
         try:
-            # 1. Cargar YOLO
+            # 1. Cargar YOLO (igual que antes)
             from ultralytics import YOLO
             self._yolo = YOLO(self.yolo_model_name)
             logger.info(f"✅ YOLO cargado: {self.yolo_model_name}")
 
-            # 2. Cargar MediaPipe
-            import mediapipe as mp
-            self._mp_pose = mp.solutions.pose.Pose(
-                static_image_mode=False,
-                model_complexity=self.mp_complexity,
-                smooth_landmarks=True,
-                min_detection_confidence=self.mp_detection_conf,
+            # 2. Cargar MediaPipe Tasks
+            # Ruta al modelo .task que descargaste
+            model_path = os.path.join(os.path.dirname(__file__), "models", "pose_landmarker_lite.task")
+            
+            # Si no existe el modelo, avisar
+            if not os.path.exists(model_path):
+                logger.error(f"❌ Modelo MediaPipe .task no encontrado en: {model_path}")
+                logger.error("Descárgalo con: curl -L -o models/pose_landmarker_lite.task <URL>")
+                return False
+
+            # Configurar opciones de la Tasks API
+            base_options = python.BaseOptions(model_asset_path=model_path)
+            options = vision.PoseLandmarkerOptions(
+                base_options=base_options,
+                running_mode=vision.RunningMode.IMAGE,  # Usamos modo IMAGE para análisis batch
+                num_poses=1,  # Ajusta si necesitas detectar más personas por crop
+                min_pose_detection_confidence=self.mp_detection_conf,
+                min_pose_presence_confidence=0.5,
                 min_tracking_confidence=self.mp_tracking_conf,
+                output_segmentation_masks=False,
             )
-            logger.info(f"✅ MediaPipe Pose cargado (complexity={self.mp_complexity})")
+            
+            # Crear el landmarker
+            self._mp_pose = vision.PoseLandmarker.create_from_options(options)
+            logger.info(f"✅ MediaPipe Tasks (PoseLandmarker) cargado")
 
             self._loaded = True
             return True
 
         except ImportError as e:
-            logger.error(
-                f"❌ Faltan dependencias: {e}\n"
-                f"   Instala con:\n"
-                f"     pip install ultralytics mediapipe"
-            )
+            logger.error(f"❌ Faltan dependencias: {e}\nInstala con: pip install ultralytics mediapipe")
             return False
         except Exception as e:
             logger.error(f"❌ Error cargando modelos: {e}", exc_info=True)
@@ -233,75 +247,68 @@ class HybridPoseTracker:
 
     # ==================== PROCESAMIENTO ====================
 
-    def process_frame(
-        self,
-        frame_bgr: np.ndarray,
-        frame_index: int = 0,
-        timestamp: float = 0.0,
-    ) -> FrameResult:
-        """
-        Procesa un frame completo.
-
-        Returns:
-            FrameResult con lista de PersonDetection (cada una con 33 landmarks).
-        """
+    def process_frame(self, frame_bgr: np.ndarray, frame_index: int = 0, timestamp: float = 0.0) -> FrameResult:
+        """Procesa un frame con YOLO + MediaPipe Tasks."""
         if not self._loaded:
-            logger.warning("⚠️ Tracker no cargado")
             return FrameResult(frame_index, timestamp)
 
         h, w = frame_bgr.shape[:2]
 
-        # 1. YOLO detecta personas
+        # 1. YOLO detecta personas (igual que antes)
         detections = self._detect_persons_yolo(frame_bgr)
         if not detections:
             return FrameResult(frame_index, timestamp, [])
-
-        # 2. Actualizar tracker IoU para asignar track_id
+        
         detections = self._tracker.update(detections)
 
-        # 3. Por cada persona, correr MediaPipe en el crop
+        # 2. Por cada persona, correr MediaPipe Tasks en el crop
         import cv2
-
+        
         for det in detections:
             x, y, bw, bh = det.bbox
-
-            # Filtrar bbox muy pequeño
             if bw < self.min_bbox_size or bh < self.min_bbox_size:
                 continue
 
             # Padding
-            pad_w = int(bw * self.pad_ratio)
-            pad_h = int(bh * self.pad_ratio)
+            pad_w, pad_h = int(bw * self.pad_ratio), int(bh * self.pad_ratio)
             x1 = max(0, x - pad_w)
             y1 = max(0, y - pad_h)
             x2 = min(w, x + bw + pad_w)
             y2 = min(h, y + bh + pad_h)
 
+            # ✅ Forzar crop cuadrado (MediaPipe Tasks se confunde con ROI no cuadrada)
+            cw = x2 - x1
+            ch = y2 - y1
+            side = max(cw, ch)
+            cx = x1 + cw // 2
+            cy = y1 + ch // 2
+            x1 = max(0, cx - side // 2)
+            y1 = max(0, cy - side // 2)
+            x2 = min(w, x1 + side)
+            y2 = min(h, y1 + side)
+
             crop = frame_bgr[y1:y2, x1:x2]
-            if crop.size == 0:
+            if crop.size == 0 or crop.shape[0] < 50 or crop.shape[1] < 50:
                 continue
 
-            # MediaPipe necesita RGB
             rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-            rgb.flags.writeable = False
-            results = self._mp_pose.process(rgb)
-            rgb.flags.writeable = True
+            rgb = np.ascontiguousarray(rgb)
 
-            if results.pose_landmarks is None:
-                continue
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            results = self._mp_pose.detect(mp_image)
 
-            # Extraer 33 landmarks normalizados al crop
-            landmarks = []
-            for lm in results.pose_landmarks.landmark:
-                landmarks.append([lm.x, lm.y, lm.z, lm.visibility])
+            if results.pose_landmarks:
+                pose_lms = results.pose_landmarks[0]
+                landmarks = []
+                for lm in pose_lms:
+                    x = max(0.0, min(1.0, float(lm.x)))     # clamp
+                    y = max(0.0, min(1.0, float(lm.y)))     # clamp
+                    z = float(lm.z)                          # z puede ser negativo, no clamp
+                    vis = float(lm.visibility)
+                    landmarks.append([x, y, z, vis])
+                det.landmarks = landmarks
 
-            det.landmarks = landmarks
-
-        return FrameResult(
-            frame_index=frame_index,
-            timestamp=timestamp,
-            persons=detections,
-        )
+        return FrameResult(frame_index=frame_index, timestamp=timestamp, persons=detections)
 
     # ==================== YOLO ====================
 

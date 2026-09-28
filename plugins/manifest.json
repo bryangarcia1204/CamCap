@@ -55,7 +55,7 @@
             "enabled_by_default": false,
             "auto_load": false,
             "requires_debug": true,
-            "capabilities": ["ui_modify"]
+            "capabilities": ["ui_modify", "settings_read", "settings_write"]
         },
         "camera_controls": {
             "version": "1.0.0",
@@ -63,6 +63,7 @@
             "author": "ProCamera",
             "enabled_by_default": true,
             "auto_load": true,
+            "requires_debug": false,
             "capabilities": ["camera_control"]
         },
         "motion_capture_export":{
@@ -72,7 +73,7 @@
         "author": "ProCamera",
         "dependencies": [],
         "capabilities": ["read_files", "write_files", "process_execution"],
-        "enabled_by_default": false,
+        "enabled_by_default": true,
         "auto_load": true,
         "requires_debug": false
         }

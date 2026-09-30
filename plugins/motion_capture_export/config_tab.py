@@ -134,7 +134,7 @@ class MotionCaptureExportConfigTab(PluginConfigTab):
         """Abre el diálogo Motion Capture Studio."""
         try:
             from core.plugin_api import get_plugin_manager
-            from plugins.motion_capture_export.motion_capture_dialog import (
+            from .motion_capture_dialog import (
                 MotionCaptureDialog,
             )
 

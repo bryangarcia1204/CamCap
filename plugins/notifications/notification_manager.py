@@ -4,7 +4,7 @@ Gestor de notificaciones - Coordina Windows + Telegram
 from datetime import datetime
 from typing import Optional, Dict
 import threading
-from plugins.notifications.windows_notifier import windows_notifier
+from .windows_notifier import windows_notifier
 
 
 class NotificationManager:
@@ -34,7 +34,7 @@ class NotificationManager:
                 chat_id = settings.get("telegram_chat_id")
 
                 if token and chat_id:
-                    from plugins.notifications.telegram_notifier import TelegramNotifier
+                    from .telegram_notifier import TelegramNotifier
                     self.telegram_bot = TelegramNotifier(token, chat_id)
                     self.telegram_enabled = True
                     print("✅ Telegram configurado")

@@ -28,11 +28,11 @@ bl_info = {
 import bpy
 
 # Importar submódulos
-from . import properties
-from . import socket_listener
-from . import retarget
-from . import operators
-from . import ui
+from ...blender_addon.camcap_bridge import properties
+from ...blender_addon.camcap_bridge import socket_listener
+from ...blender_addon.camcap_bridge import retarget
+from ...blender_addon.camcap_bridge import operators
+from ...blender_addon.camcap_bridge import ui
 
 
 # ============================================================

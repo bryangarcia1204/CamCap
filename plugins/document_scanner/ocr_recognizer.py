@@ -63,8 +63,11 @@ class OCRRecognizer:
 
         if preprocess:
             # ✅ Import desde el plugin image_enhancer
-            from plugins.image_enhancer.image_enhancer import ImageEnhancer
-            image = ImageEnhancer.enhance(image, mode="auto")
+            try:
+                from ..image_enhancer import ImageEnhancer
+                image = ImageEnhancer.enhance(image, mode="auto")
+            except ImportError as e:
+                logger.warning("No tienes el plugin de Enriquesimiento de Imagenes")
 
         if len(image.shape) == 3:
             image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)

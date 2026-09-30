@@ -83,7 +83,7 @@ class FaceAnalyzer:
         if camera_id in self._recognizers:
             return self._recognizers[camera_id]
         try:
-            from plugins.face_recognizer.face_recognizer import FaceRecognizer
+            from .face_recognizer import FaceRecognizer
             from core.settings_manager import settings_manager
             det = settings_manager.get_detection_settings()
             recognizer = FaceRecognizer(

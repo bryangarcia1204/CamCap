@@ -48,7 +48,7 @@ class ImageEnhancerPlugin(BasePlugin):
             # ConfigTab
             from core.extensions.interfaces import ConfigTab
             from core.extensions.config_tab_provider import PluginConfigTabProvider
-            from plugins.image_enhancer.config_tab import ImageEnhancerConfigTab
+            from .config_tab import ImageEnhancerConfigTab
 
             self._tab_provider = PluginConfigTabProvider(
                 plugin_name=self.NAME,

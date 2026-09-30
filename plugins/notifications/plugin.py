@@ -34,7 +34,7 @@ class NotificationsPlugin(BasePlugin):
 
     def on_load(self) -> bool:
         try:
-            from plugins.notifications.notification_manager import notification_manager
+            from .notification_manager import notification_manager
             self._notification_manager = notification_manager
             logger.info("🔌 NotificationsPlugin: singleton cargado")
             return True
@@ -47,7 +47,7 @@ class NotificationsPlugin(BasePlugin):
             # 1. ConfigTab
             from core.extensions.interfaces import ConfigTab
             from core.extensions.config_tab_provider import PluginConfigTabProvider
-            from plugins.notifications.config_tab import NotificationsConfigTab
+            from .config_tab import NotificationsConfigTab
 
             self._tab_provider = PluginConfigTabProvider(
                 plugin_name=self.NAME,

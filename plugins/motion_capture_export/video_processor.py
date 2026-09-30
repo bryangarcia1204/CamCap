@@ -11,7 +11,7 @@ from typing import Optional, Callable, List
 from dataclasses import dataclass
 
 from utils.logger import get_logger
-from plugins.motion_capture_export.pose_tracker import (
+from .pose_tracker import (
     HybridPoseTracker, FrameResult,
 )
 

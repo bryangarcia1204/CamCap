@@ -24,7 +24,7 @@ from datetime import datetime
 import numpy as np
 
 from utils.logger import get_logger
-from plugins.motion_capture_export.pose_tracker import (
+from .pose_tracker import (
     HybridPoseTracker, FrameResult, PersonDetection,
 )
 

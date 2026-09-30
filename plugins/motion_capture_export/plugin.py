@@ -46,7 +46,7 @@ class MotionCaptureExportPlugin(BasePlugin):
     def on_load(self) -> bool:
         """Carga modelos YOLO + MediaPipe."""
         try:
-            from plugins.motion_capture_export.pose_tracker import HybridPoseTracker
+            from .pose_tracker import HybridPoseTracker
             self._tracker = HybridPoseTracker()
             if not self._tracker.load():
                 logger.warning(
@@ -67,7 +67,7 @@ class MotionCaptureExportPlugin(BasePlugin):
         try:
             from core.extensions.interfaces import ConfigTab
             from core.extensions.config_tab_provider import PluginConfigTabProvider
-            from plugins.motion_capture_export.config_tab import (
+            from .config_tab import (
                 MotionCaptureExportConfigTab,
             )
 
@@ -150,8 +150,8 @@ class MotionCaptureExportPlugin(BasePlugin):
             return False
 
         try:
-            from plugins.motion_capture_export.video_processor import VideoProcessor
-            from plugins.motion_capture_export.exporters import get_exporter
+            from .video_processor import VideoProcessor
+            from .exporters import get_exporter
 
             video_path = config["video_path"]
             output_path = config["output_path"]
@@ -236,8 +236,8 @@ class MotionCaptureExportPlugin(BasePlugin):
             return False
 
         try:
-            from plugins.motion_capture_export.socket_server import SocketServer
-            from plugins.motion_capture_export.live_capture import LiveCapture
+            from .socket_server import SocketServer
+            from .live_capture import LiveCapture
 
             # 1. Crear y arrancar el socket server
             self._socket_server = SocketServer(

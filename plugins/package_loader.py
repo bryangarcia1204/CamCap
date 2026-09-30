@@ -215,7 +215,7 @@ class PluginPackageLoader:
 
         # ✅ NUEVO: Validar con PackageValidator
         try:
-            from plugins.package_validator import get_package_validator
+            from .package_validator import get_package_validator
             validator = get_package_validator()
             result = validator.validate_zip(zip_path)
             if not result.valid:

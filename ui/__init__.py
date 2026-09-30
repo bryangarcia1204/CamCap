@@ -1,30 +1,29 @@
-# ui/__init__.py
-from .main_window import MainWindow
-from .camera_widget import CameraWidget
-from .camera_grid import CameraGrid
-from .file_explorer import FileExplorer
-from .image_preview import ImagePreview
-from .image_preview_dialog import ImagePreviewDialog
-from .settings_dialog import SettingsDialog
-from .loading_overlay import LoadingOverlay
-from .loading_manager import LoadingManager, LoadingContext
-from .splash_screen import SplashScreen
-from .audio_level_widget import AudioLevelWidget
-from .system_monitor_widget import SystemMonitorWidget, MiniBarWidget
+"""
+ProCamera UI.
 
-__all__ = [
-    'MainWindow',
-    'CameraWidget',
-    'CameraGrid',
-    'FileExplorer',
-    'ImagePreview',
-    'ImagePreviewDialog',
-    'SettingsDialog',
-    'LoadingOverlay',
-    'LoadingManager',
-    'LoadingContext',
-    'SplashScreen',
-    'AudioLevelWidget',
-    'SystemMonitorWidget',
-    'MiniBarWidget',
-]
+Interfaz gráfica del sistema. Los widgets se importan explícitamente
+desde sus módulos (`from ui.camera_widget import CameraWidget`) para
+evitar ciclos de importación entre diálogos, ventanas y grids.
+
+Submódulos principales:
+  - ui.main_window             Ventana principal
+  - ui.camera_widget           Widget de una cámara
+  - ui.camera_grid             Grid de cámaras
+  - ui.file_explorer           Explorador de archivos
+  - ui.image_preview           Visor de imágenes
+  - ui.image_preview_dialog    Diálogo de preview + guardado
+  - ui.settings_dialog         Diálogo de configuración
+  - ui.settings_dialog_base    Base para ConfigTabs de plugins
+  - ui.audio_level_widget      VU meter reutilizable
+  - ui.system_monitor_widget   Monitor de sistema (CPU/GPU/RAM)
+  - ui.plugin_manager_dialog   Administrador de plugins
+  - ui.plugin_card            Card de un plugin
+  - ui.plugin_info_dialog      Info detallada de un plugin
+  - ui.plugin_install_dialog   Instalación desde ZIP
+  - ui.markdown_viewer         Viewer markdown nivel GitHub
+  - ui.loading_manager         Splash + overlay
+  - ui.splash_screen           Pantalla de carga
+  - ui.loading_overlay         Overlay de carga
+"""
+
+__all__ = []

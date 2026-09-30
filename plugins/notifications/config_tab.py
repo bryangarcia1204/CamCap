@@ -223,7 +223,7 @@ class NotificationsConfigTab(PluginConfigTab):
 
             # Recargar NotificationManager
             try:
-                from plugins.notifications.notification_manager import notification_manager
+                from .notification_manager import notification_manager
                 notification_manager._load_telegram_config()
             except Exception as e:
                 print(f"Error recargando notification_manager: {e}")

@@ -40,7 +40,7 @@ class AudioPlugin(BasePlugin):
 
     def on_load(self) -> bool:
         try:
-            from plugins.audio.audio_manager import audio_manager
+            from .audio_manager import audio_manager
             self._audio_manager = audio_manager
             logger.info("🔌 AudioPlugin: singleton cargado")
             return True
@@ -70,7 +70,7 @@ class AudioPlugin(BasePlugin):
             # 2. ConfigTab
             from core.extensions.interfaces import ConfigTab
             from core.extensions.config_tab_provider import PluginConfigTabProvider
-            from plugins.audio.config_tab import AudioConfigTab
+            from .config_tab import AudioConfigTab
 
             self._tab_provider = PluginConfigTabProvider(
                 plugin_name=self.NAME,
@@ -83,7 +83,7 @@ class AudioPlugin(BasePlugin):
             self.register_extension(ConfigTab, self._tab_provider, priority=160)
 
             # 3. Mezclador
-            from plugins.audio.mixer import AudioMixer
+            from .mixer import AudioMixer
             self._mixer = AudioMixer()
 
             # 4. Suscribirse a eventos
@@ -183,7 +183,7 @@ class AudioPlugin(BasePlugin):
         audio_path = os.path.splitext(path)[0] + ".wav"
 
         try:
-            from plugins.audio.wav_writer import WavWriter
+            from .wav_writer import WavWriter
             from utils.config_loader import advanced_config
             sample_rate = advanced_config.get("audio_sample_rate", 44100)
             channels = advanced_config.get("audio_channels", 1)

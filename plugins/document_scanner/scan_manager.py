@@ -7,9 +7,8 @@ import os
 from datetime import datetime
 from typing import Optional, Dict
 
-from plugins.document_scanner.document_detector import DocumentDetector
-from plugins.image_enhancer.image_enhancer import ImageEnhancer
-from plugins.document_scanner.ocr_recognizer import OCRRecognizer
+from .document_detector import DocumentDetector
+from .ocr_recognizer import OCRRecognizer
 from utils.logger import get_logger
 
 logger = get_logger("ScanManager")
@@ -20,7 +19,13 @@ class ScanManager:
 
     def __init__(self, tesseract_path: str = None):
         self.detector = DocumentDetector()
-        self.enhancer = ImageEnhancer()
+        try:
+            from ..image_enhancer import ImageEnhancer
+            self.enhancer = ImageEnhancer()
+        except ImportError:
+            self.enhancer = None
+            logger.warning("No tienes el plugin de Enriquesimiento de Imagenes")
+
         self.ocr = OCRRecognizer(tesseract_path=tesseract_path)
 
         self.last_scan = None
@@ -55,8 +60,9 @@ class ScanManager:
             result["corrected_image"] = corrected
 
             # 3. Mejorar imagen
-            enhanced = self.enhancer.auto_enhance(corrected)
-            result["enhanced_image"] = enhanced
+            if self.enhancer:
+                enhanced = self.enhancer.auto_enhance(corrected)
+                result["enhanced_image"] = enhanced
 
             # 4. OCR
             text = self.ocr.recognize(enhanced, preprocess=False)
@@ -64,8 +70,9 @@ class ScanManager:
             result["ocr_confidence"] = self.ocr.last_confidence
         else:
             # Sin detección: usar frame completo
-            enhanced = self.enhancer.auto_enhance(frame)
-            result["enhanced_image"] = enhanced
+            if self.enhancer:
+                enhanced = self.enhancer.auto_enhance(corrected)
+                result["enhanced_image"] = enhanced
 
             text = self.ocr.recognize(enhanced, preprocess=False)
             result["text"] = text

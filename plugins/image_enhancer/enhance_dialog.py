@@ -13,7 +13,7 @@ from PySide6.QtGui import QPixmap, QImage, QKeyEvent
 
 from utils.logger import get_logger
 from utils.timer_manager import timer_manager
-from plugins.image_enhancer.image_enhancer import ImageEnhancer
+from .image_enhancer import ImageEnhancer
 
 logger = get_logger("ImageEnhanceDialog")
 

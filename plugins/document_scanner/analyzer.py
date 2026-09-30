@@ -127,7 +127,7 @@ class DocumentAnalyzer:
         if camera_id in self._scanners:
             return self._scanners[camera_id]
         try:
-            from plugins.document_scanner.scan_manager import ScanManager
+            from .scan_manager import ScanManager
             from core.settings_manager import settings_manager
             scan = settings_manager.get_scan_settings()
             tesseract_path = scan.get("tesseract_path") or None

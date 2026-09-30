@@ -7,7 +7,7 @@ Define la firma común que el plugin espera:
 from abc import ABC, abstractmethod
 from typing import List
 
-from plugins.motion_capture_export.pose_tracker import FrameResult
+from .pose_tracker import FrameResult
 
 
 class BaseExporter(ABC):

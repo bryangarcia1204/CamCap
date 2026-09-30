@@ -272,7 +272,7 @@ class SocketServer:
 
     def _send_hello(self):
         """Envía el mensaje de bienvenida."""
-        from plugins.motion_capture_export.pose_tracker import HybridPoseTracker
+        from .pose_tracker import HybridPoseTracker
 
         self._send_message({
             "type": "hello",

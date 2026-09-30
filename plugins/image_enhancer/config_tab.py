@@ -1,17 +1,23 @@
 """
-Tab de configuración del plugin image_enhancer.
+ConfigTab del plugin image_enhancer.
 
-NOTA: ImageEnhancer no tiene parámetros globales en advanced_config,
-porque sus ajustes se aplican por-llamada desde el diálogo.
-Esta tab muestra los presets disponibles y permite configurar
-el preset por defecto + auto-mejora.
+Además de los ajustes por defecto, incluye un botón para abrir
+el editor de imágenes directamente desde la configuración,
+sin necesidad de ir a la vista previa de captura.
 """
+import os
 from PySide6.QtWidgets import (
     QVBoxLayout, QGridLayout, QGroupBox, QLabel,
-    QComboBox, QCheckBox, QScrollArea, QWidget
+    QComboBox, QCheckBox, QPushButton, QScrollArea,
+    QWidget, QHBoxLayout, QFileDialog, QMessageBox,
+    QDialog,
 )
+from PySide6.QtCore import Qt
 
 from ui.settings_dialog_base import PluginConfigTab
+from utils.logger import get_logger
+
+logger = get_logger("Plugin.ImageEnhancerConfigTab")
 
 
 class ImageEnhancerConfigTab(PluginConfigTab):
@@ -38,7 +44,45 @@ class ImageEnhancerConfigTab(PluginConfigTab):
         layout.setSpacing(16)
         layout.setContentsMargins(16, 16, 16, 16)
 
-        # ============ Grupo 1: Preset por defecto ============
+        # ============ Grupo 1: Editor rápido ============
+        editor_group = QGroupBox("🎨 Editor de Imágenes")
+        editor_layout = QVBoxLayout(editor_group)
+
+        editor_desc = QLabel(
+            "Abre el editor de imágenes para mejorar cualquier foto "
+            "de tu disco. Aplica presets, ajusta brillo/contraste, "
+            "reduce ruido, etc."
+        )
+        editor_desc.setStyleSheet(
+            "color: rgba(255,255,255,0.6); font-size: 11px;"
+        )
+        editor_desc.setWordWrap(True)
+        editor_layout.addWidget(editor_desc)
+
+        open_editor_btn = QPushButton("🎨 Abrir Editor de Imágenes")
+        open_editor_btn.setMinimumHeight(40)
+        open_editor_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ef6c00, stop:1 #f57c00);
+                color: white;
+                border: 1px solid rgba(255,255,255,0.15);
+                border-radius: 50px;
+                padding: 10px 24px;
+                font-weight: 600;
+                font-size: 13px;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #f57c00, stop:1 #fb8c00);
+            }
+        """)
+        open_editor_btn.clicked.connect(self._open_editor)
+        editor_layout.addWidget(open_editor_btn)
+
+        layout.addWidget(editor_group)
+
+        # ============ Grupo 2: Preset por defecto ============
         preset_group = QGroupBox("🎯 Preset por defecto")
         preset_layout = QGridLayout(preset_group)
         preset_layout.setVerticalSpacing(10)
@@ -48,13 +92,13 @@ class ImageEnhancerConfigTab(PluginConfigTab):
         self.preset_combo = QComboBox()
         self.preset_combo.addItems([
             "auto", "documento", "foto", "noche",
-            "retrato", "paisaje", "ninguno"
+            "retrato", "paisaje", "ninguno",
         ])
         preset_layout.addWidget(self.preset_combo, 0, 1)
 
         layout.addWidget(preset_group)
 
-        # ============ Grupo 2: Automatización ============
+        # ============ Grupo 3: Automatización ============
         auto_group = QGroupBox("🤖 Automatización")
         auto_layout = QVBoxLayout(auto_group)
 
@@ -70,7 +114,7 @@ class ImageEnhancerConfigTab(PluginConfigTab):
 
         layout.addWidget(auto_group)
 
-        # ============ Grupo 3: Info ============
+        # ============ Info ============
         info_group = QGroupBox("ℹ️ Info")
         info_layout = QVBoxLayout(info_group)
 
@@ -79,7 +123,9 @@ class ImageEnhancerConfigTab(PluginConfigTab):
             "se ajustan por-imagen desde el diálogo de edición.\n\n"
             "Los presets se aplican con un solo clic desde el editor."
         )
-        info_text.setStyleSheet("color: rgba(255,255,255,0.6); font-size: 11px;")
+        info_text.setStyleSheet(
+            "color: rgba(255,255,255,0.6); font-size: 11px;"
+        )
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text)
 
@@ -90,6 +136,130 @@ class ImageEnhancerConfigTab(PluginConfigTab):
         self.layout.addWidget(scroll)
 
         self._load_values()
+
+    # ==================== ABRIR EDITOR ====================
+
+    def _open_editor(self):
+        """Abre un archivo de imagen y lanza el editor."""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Seleccionar imagen para editar",
+            os.path.expanduser("~/Pictures"),
+            "Imágenes (*.jpg *.jpeg *.png *.bmp *.tiff *.webp);;Todos (*)",
+        )
+        if not path:
+            return
+
+        try:
+            import cv2
+            import numpy as np
+
+            # Leer la imagen (con soporte de caracteres no-ASCII)
+            try:
+                with open(path, "rb") as f:
+                    data = f.read()
+                arr = np.frombuffer(data, dtype=np.uint8)
+                image = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "Error", f"No se pudo leer la imagen:\n{e}"
+                )
+                return
+
+            if image is None:
+                QMessageBox.warning(
+                    self, "Error", "No se pudo decodificar la imagen."
+                )
+                return
+
+            logger.debug(f"🎨 Editor abierto: {path} ({image.shape})")
+
+            # Abrir el diálogo de edición
+            from .enhance_dialog import ImageEnhanceDialog
+
+            dialog = ImageEnhanceDialog(image, parent=self.window())
+            if dialog.exec() != QDialog.Accepted:
+                logger.debug("Editor cancelado por el usuario")
+                return
+
+            # Obtener la imagen mejorada
+            result, was_enhanced = dialog.get_result()
+            if result is None:
+                return
+
+            if not was_enhanced:
+                QMessageBox.information(
+                    self, "Sin cambios",
+                    "No se aplicó ninguna mejora."
+                )
+                return
+
+            # Preguntar dónde guardar
+            self._save_enhanced_image(result, path)
+
+        except ImportError as e:
+            QMessageBox.critical(
+                self, "Faltan dependencias",
+                f"Falta alguna dependencia:\n{e}\n\n"
+                f"Instala con:\n  pip install opencv-python numpy"
+            )
+        except Exception as e:
+            logger.error(f"Error abriendo editor: {e}", exc_info=True)
+            QMessageBox.critical(
+                self, "Error", f"Error inesperado:\n{e}"
+            )
+
+    def _save_enhanced_image(self, image, original_path: str):
+        """Pregunta dónde guardar la imagen mejorada y la guarda."""
+        # Sugerir un nombre por defecto al lado del original
+        base, ext = os.path.splitext(original_path)
+        default_name = f"{base}_enhanced{ext}"
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Guardar imagen mejorada",
+            default_name,
+            "Imágenes (*.jpg *.jpeg *.png *.bmp *.tiff *.webp);;Todos (*)",
+        )
+        if not save_path:
+            return
+
+        try:
+            import cv2
+
+            # Codificar según la extensión
+            ext = os.path.splitext(save_path)[1].lower()
+            params = []
+            if ext in (".jpg", ".jpeg"):
+                params = [cv2.IMWRITE_JPEG_QUALITY, 95]
+            elif ext == ".png":
+                params = [cv2.IMWRITE_PNG_COMPRESSION, 3]
+            elif ext == ".webp":
+                params = [cv2.IMWRITE_WEBP_QUALITY, 95]
+
+            success, buffer = cv2.imencode(ext, image, params)
+            if not success:
+                raise RuntimeError("cv2.imencode falló")
+
+            with open(save_path, "wb") as f:
+                f.write(buffer.tobytes())
+
+            size_kb = os.path.getsize(save_path) / 1024
+            logger.info(f"💾 Imagen guardada: {save_path} ({size_kb:.1f} KB)")
+
+            QMessageBox.information(
+                self, "Guardado",
+                f"Imagen mejorada guardada en:\n{save_path}\n\n"
+                f"({size_kb:.1f} KB)"
+            )
+
+        except Exception as e:
+            logger.error(f"Error guardando imagen: {e}", exc_info=True)
+            QMessageBox.critical(
+                self, "Error", f"No se pudo guardar:\n{e}"
+            )
+
+    # ==================== CARGA / GUARDADO ====================
 
     def _load_values(self):
         try:
@@ -103,7 +273,7 @@ class ImageEnhancerConfigTab(PluginConfigTab):
                 self._config.get("image_enhancer_auto_on_scan", True)
             )
         except Exception as e:
-            print(f"Error cargando valores: {e}")
+            logger.error(f"Error cargando valores: {e}")
 
     def get_config(self):
         return {
@@ -113,10 +283,21 @@ class ImageEnhancerConfigTab(PluginConfigTab):
         }
 
     def apply_changes(self) -> bool:
+        """Guarda la config del tab (staging)."""
         try:
-            return self.context.settings.set_plugin_config(
-                self.plugin_name, self.get_config()
+            self.stage_plugin_config(
+                "image_enhancer_default_preset",
+                self.preset_combo.currentText(),
             )
+            self.stage_plugin_config(
+                "image_enhancer_auto_on_capture",
+                self.auto_capture_cb.isChecked(),
+            )
+            self.stage_plugin_config(
+                "image_enhancer_auto_on_scan",
+                self.auto_scan_cb.isChecked(),
+            )
+            return True
         except Exception as e:
-            print(f"Error aplicando config: {e}")
+            logger.error(f"Error guardando config: {e}", exc_info=True)
             return False

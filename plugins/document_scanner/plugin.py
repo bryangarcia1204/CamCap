@@ -32,7 +32,7 @@ class DocumentScannerPlugin(BasePlugin):
 
     def on_load(self) -> bool:
         try:
-            from plugins.document_scanner.scan_manager import ScanManager
+            from .scan_manager import ScanManager
             self._scanner_class = ScanManager
             logger.info("🔌 DocumentScannerPlugin: clase cargada")
             return True
@@ -43,7 +43,7 @@ class DocumentScannerPlugin(BasePlugin):
     def on_enable(self) -> bool:
         try:
             # 1. FrameAnalyzer (detección en vivo)
-            from plugins.document_scanner.analyzer import DocumentAnalyzer
+            from .analyzer import DocumentAnalyzer
             from core.extensions.interfaces import FrameAnalyzer
 
             self._analyzer = DocumentAnalyzer(self.context)
@@ -55,7 +55,7 @@ class DocumentScannerPlugin(BasePlugin):
             # 2. ConfigTab
             from core.extensions.interfaces import ConfigTab
             from core.extensions.config_tab_provider import PluginConfigTabProvider
-            from plugins.document_scanner.config_tab import DocumentScannerConfigTab
+            from .config_tab import DocumentScannerConfigTab
 
             self._tab_provider = PluginConfigTabProvider(
                 plugin_name=self.NAME,
@@ -144,7 +144,7 @@ class DocumentScannerPlugin(BasePlugin):
 
     def _do_ocr(self, path, frame, scan_settings):
         try:
-            from plugins.document_scanner.scan_manager import ScanManager
+            from .scan_manager import ScanManager
             scanner = ScanManager(
                 tesseract_path=scan_settings.get("tesseract_path") or None
             )

@@ -148,7 +148,7 @@ class MotionAnalyzer:
             return self._detectors[camera_id]
 
         try:
-            from plugins.motion_detector.motion_detector import MotionDetector
+            from .motion_detector import MotionDetector
             from core.settings_manager import settings_manager
 
             det = settings_manager.get_detection_settings()
